@@ -422,7 +422,7 @@ data class GridHeader(val gridHeaderRenderer: HeaderRenderer?) : YoutubeiHeader 
 
 @Serializable
 data class MusicCarouselShelfRenderer(
-    override val header: Header,
+    override val header: Header? = null,  
     val contents: List<YoutubeiBrowseResponse.YoutubeiShelf.YoutubeiShelfContentsItem>? = null,
 ) : YoutubeiHeaderContainer
 
@@ -435,7 +435,7 @@ data class MusicCardShelfRenderer(
     val title: TextRuns,
     val subtitle: TextRuns,
     val menu: Menu,
-    override val header: Header
+    override val header: Header? = null  
 ) : YoutubeiHeaderContainer
 
 @Serializable

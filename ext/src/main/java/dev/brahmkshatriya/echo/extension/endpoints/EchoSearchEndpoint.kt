@@ -75,19 +75,23 @@ class EchoSearchEndpoint(override val api: YoutubeiApi) : ApiEndpoint() {
             val card: MusicCardShelfRenderer? = category.musicCardShelfRenderer
             val key: String? =
                 card?.header?.musicCardShelfHeaderBasicRenderer?.title?.firstTextOrNull()
-            if (key != null) {
-                categoryLayouts.add(
-                    Pair(
-                        MediaItemLayout(
-                            mutableListOf(card.getMediaItem()),
-                            YoutubeUiString.Type.SEARCH_PAGE.createFromKey(key, hl),
-                            null,
-                            type = ItemLayoutType.CARD
-                        ),
-                        null
+            if (card != null && key != null) {
+                try {
+                    categoryLayouts.add(
+                        Pair(
+                            MediaItemLayout(
+                                mutableListOf(card.getMediaItem()),
+                                YoutubeUiString.Type.SEARCH_PAGE.createFromKey(key, hl),
+                                null,
+                                type = ItemLayoutType.CARD
+                            ),
+                            null
+                        )
                     )
-                )
-                continue
+                    continue
+                } catch (e: Exception) {
+                    println("DEBUG: Failed to process MusicCardShelfRenderer: ${e.message}")
+                }
             }
 
             val itemSectionRenderer: ItemSectionRenderer? = category.itemSectionRenderer
