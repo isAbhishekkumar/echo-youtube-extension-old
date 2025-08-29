@@ -80,9 +80,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.encodeToString
 import java.security.MessageDigest
 
-/**
- * Creates a PagedData<Shelf> from PagedData<EchoMediaItem>
- */
+
 private fun createShelfPagedDataFromMediaItems(mediaItems: PagedData<EchoMediaItem>): PagedData<Shelf> {
     return PagedData.Continuous { continuation ->
         val page = mediaItems.loadPage(continuation)
@@ -600,7 +598,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         )
     }
     override suspend fun loadHomeFeed(): Feed<Shelf> {
-        val tabs = listOf<Tab>() // YouTube home doesn't have tabs currently
+        val tabs = listOf<Tab>() 
         return Feed(tabs) { tab ->
             val pagedData = PagedData.Continuous { continuation ->
                 val result = songFeedEndPoint.getSongFeed(
@@ -1449,7 +1447,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                 ).takeIf { audioFiles.isNotEmpty() }
             ),
             plays = video.videoDetails.viewCount?.toLongOrNull(),
-            // Update extras with video-specific information
             extras = newTrack.extras.toMutableMap().apply {
                 put("videoId", track.id)
                 put("channelId", video.videoDetails.channelId ?: "")
@@ -1499,14 +1496,11 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     
     override suspend fun loadSearchFeed(query: String): Feed<Shelf> {
         val tabs = if (query.isNotBlank()) {
-            // Get search tabs for the query
             val search = api.Search.search(query, null).getOrThrow()
             oldSearch = query to search.categories.map { (itemLayout, _) ->
-                // Fix shelf items for search results
                 try {
                     SearchResultsFixer.fixSearchResultShelf(itemLayout.toShelf(api, SINGLES, thumbnailQuality))
                 } catch (e: Exception) {
-                    // If fixing fails, return the original shelf to prevent crashes
                     itemLayout.toShelf(api, SINGLES, thumbnailQuality)
                 }
             }
@@ -1557,7 +1551,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
 
         return Feed(tabs) { tab ->
             val pagedData = if (query.isNotBlank() && (tab == null || tab.id == "All")) {
-                // For search with query and "All" tab
                 PagedData.Single {
                     try {
                         val old = oldSearch?.takeIf { it.first == query }?.second
@@ -1566,7 +1559,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                         val search = try {
                             api.Search.search(query, tab?.id).getOrThrow()
                         } catch (e: Exception) {
-                            // If search fails, return an empty list
                             return@Single emptyList()
                         }
                         
@@ -1577,35 +1569,28 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                         try {
                                             val shelf = item.toEchoMediaItem(false, thumbnailQuality)?.toShelf()
                                             if (shelf != null) {
-                                                // Fix shelf items for search results
                                                 try {
                                                     SearchResultsFixer.fixSearchResultShelf(shelf)
                                                 } catch (e: Exception) {
-                                                    // If fixing fails, return the original shelf to prevent crashes
                                                     shelf
                                                 }
                                             } else null
                                         } catch (e: Exception) {
-                                            // Skip items that cause exceptions
                                             null
                                         }
                                     }
                                 } catch (e: Exception) {
-                                    // If processing a category fails, return an empty list for this category
                                     emptyList()
                                 }
                             }.flatten()
                         } catch (e: Exception) {
-                            // If the entire process fails, return an empty list
                             emptyList()
                         }
                     } catch (e: Exception) {
-                        // Global error handler
                         emptyList()
                     }
                 }
             } else if (tab != null) {
-                // For tab-based search
                 PagedData.Continuous {
                     try {
                         val params = tab.id
@@ -1615,45 +1600,37 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                 params = params, continuation = continuation
                             ).getOrThrow()
                         } catch (e: Exception) {
-                            // If the feed fetch fails, return an empty page
                             return@Continuous Page(emptyList(), null)
                         }
                         
                         val data = try {
                             result.layouts.mapNotNull { itemLayout ->
                                 try {
-                                    // Fix shelf items for search results in tabs
                                     val shelf = try {
                                         itemLayout.toShelf(api, SINGLES, thumbnailQuality)
                                     } catch (e: Exception) {
-                                        // If conversion fails, skip this item
                                         return@mapNotNull null
                                     }
                                     
                                     try {
                                         SearchResultsFixer.fixSearchResultShelf(shelf)
                                     } catch (e: Exception) {
-                                        // If fixing fails, return the original shelf
                                         shelf
                                     }
                                 } catch (e: Exception) {
-                                    // If any error occurs for a specific layout, skip it
                                     null
                                 }
                             }
                         } catch (e: Exception) {
-                            // If the entire mapping fails, return an empty list
                             emptyList()
                         }
                         
                         Page(data, result.ctoken)
                     } catch (e: Exception) {
-                        // Global error handler for the entire data loading process
                         Page(emptyList(), null)
                     }
                 }
             } else {
-                // Empty result
                 PagedData.Single { listOf() }
             }
             
@@ -1701,7 +1678,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     }
 
     suspend fun radio(user: User): Radio {
-        // Convert the User to Artist using ModelTypeHelper which guarantees an Artist
         val artist = ModelTypeHelper.userToArtist(user)
         return radio(artist)
     }
@@ -1769,23 +1745,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         return Feed(emptyList()) { _ -> PagedData.Single { shelves }.toFeedData() }
     }
 
-    // Note: We now use the UserToArtistHelper to safely convert User objects to Artists
-    // These methods are no longer needed and could cause casting issues:
-    // override suspend fun loadFeed(user: User): Feed<Shelf>? = loadFeed(UserToArtistHelper.safeConvertUserToArtist(user))
-    // override suspend fun loadUser(user: User): User {
-    //    loadArtist(UserToArtistHelper.safeConvertUserToArtist(user))
-    //    return loadedArtist!!.toUser(HIGH)
-    //}
-
-    // This is now handled by followItem method
-    // The code below was part of the followArtist implementation which is now handled by followItem
-    /* 
-    suspend fun followArtist(artist: Artist, follow: Boolean) {
-        val subId = artist.extras["subId"] ?: throw Exception("No subId found")
-        withUserAuth { it.SetSubscribedToArtist.setSubscribedToArtist(artist.id, follow, subId) }
-    }
-    */
-
     private var loadedArtist: YtmArtist? = null
     override suspend fun loadArtist(artist: Artist): Artist {
         val result = artistEndPoint.loadArtist(artist.id)
@@ -1852,8 +1811,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         }
     }
 
-    // Implement LoginClient methods
-    // Implements LoginClient
     override fun setLoginUser(user: User?) {
         if (user == null) {
             api.user_auth_state = null
@@ -1881,7 +1838,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             }
         }.getUsers("", "").firstOrNull() ?: return null
         
-        // Enhance the user with additional metadata
         return userResponse.copy(
             subtitle = userResponse.extras["email"] ?: "YouTube Music User",
             extras = userResponse.extras.toMutableMap().apply {
@@ -1889,14 +1845,12 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                 put("userService", "youtube_music")
                 put("accountType", "google")
                 put("lastUpdated", System.currentTimeMillis().toString())
-                // Preserve existing user data
                 putAll(userResponse.extras)
             }
         )
     }
 
 
-    // Implement TrackerMarkClient methods
     override suspend fun getMarkAsPlayedDuration(details: TrackDetails): Long? = 30000L
 
     override suspend fun onMarkAsPlayed(details: TrackDetails) {
@@ -2006,8 +1960,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         it.DeleteAccountPlaylist.deleteAccountPlaylist(playlist.id).getOrThrow()
     }
 
-    // Implement LikeClient methods
-    // Implements LikeClient
     override suspend fun likeItem(item: EchoMediaItem, shouldLike: Boolean) {
         val track = item as? Track ?: throw Exception("Only tracks can be liked")
         likeTrack(track, shouldLike)
@@ -2108,9 +2060,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         else -> throw ClientException.NotSupported("Unsupported media item type for sharing")
     }
     
-    // Required method implementations to satisfy the interface
     override suspend fun radio(item: EchoMediaItem, context: EchoMediaItem?): Radio {
-        // Fix any User objects that might be passed as EchoMediaItem
         val fixedItem = when(item) {
             is User -> ModelTypeHelper.userToArtist(item)
             else -> item
@@ -2127,7 +2077,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     
     override suspend fun loadRadio(radio: Radio): Radio = radio
     
-    // Helper method to convert URL to NetworkRequest
     private fun String.toGetRequest(): NetworkRequest {
         return NetworkRequest(url = this)
     }
@@ -2136,12 +2085,10 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     
     override suspend fun onPlayingStateChanged(details: TrackDetails?, isPlaying: Boolean) {}
     
-    // LikeClient implementation
     override suspend fun isItemLiked(item: EchoMediaItem): Boolean {
         return item.extras["isLiked"]?.toBoolean() ?: false
     }
     
-    // FollowClient implementation
     override suspend fun isFollowing(item: EchoMediaItem): Boolean {
         return item.extras["isFollowed"]?.toBoolean() ?: false
     }
@@ -2160,7 +2107,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         }
     }
     
-    // LyricsSearchClient implementation
     override suspend fun searchLyrics(query: String): Feed<Lyrics> {
         return listOf<Lyrics>().toFeed()
     }
