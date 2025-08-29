@@ -96,17 +96,43 @@ class EchoSearchEndpoint(override val api: YoutubeiApi) : ApiEndpoint() {
 
             val itemSectionRenderer: ItemSectionRenderer? = category.itemSectionRenderer
             if (itemSectionRenderer != null) {
-                categoryLayouts.add(
-                    Pair(MediaItemLayout(itemSectionRenderer.getMediaItems(), null, null), null)
-                )
+                try {
+                    val mediaItems = try {
+                        itemSectionRenderer.getMediaItems()
+                    } catch (e: NotImplementedError) {
+                        println("DEBUG: getMediaItems not implemented for item section: ${e.message}")
+                        emptyList()
+                    } catch (e: NullPointerException) {
+                        println("DEBUG: Null pointer in getMediaItems for item section: ${e.message}")
+                        emptyList()
+                    } catch (e: Exception) {
+                        println("DEBUG: Error getting media items for item section: ${e.message}")
+                        emptyList()
+                    }
+                    categoryLayouts.add(
+                        Pair(MediaItemLayout(mediaItems, null, null), null)
+                    )
+                } catch (e: Exception) {
+                    println("DEBUG: Error processing item section renderer: ${e.message}")
+                }
                 continue
             }
 
             val shelf: YTMGetSongFeedEndpoint.MusicShelfRenderer =
                 category.musicShelfRenderer ?: continue
-            val items =
+            val items = try {
                 shelf.contents?.mapNotNull { it.toMediaItemData(hl, api)?.first }?.toMutableList()
                     ?: continue
+            } catch (e: NotImplementedError) {
+                println("DEBUG: toMediaItemData not implemented for shelf contents: ${e.message}")
+                continue
+            } catch (e: NullPointerException) {
+                println("DEBUG: Null pointer in toMediaItemData for shelf contents: ${e.message}")
+                continue
+            } catch (e: Exception) {
+                println("DEBUG: Error processing shelf contents: ${e.message}")
+                continue
+            }
             val searchParams =
                 if (index == 0) null else chips.getOrNull(index - 1)?.chipCloudChipRenderer?.navigationEndpoint?.searchEndpoint?.params
 

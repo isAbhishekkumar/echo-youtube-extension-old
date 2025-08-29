@@ -95,54 +95,80 @@ open class EchoSongFeedEndpoint(override val api: YoutubeiApi) : ApiEndpoint() {
                 YoutubeUiString.Type.HOME_FEED.createFromKey(this, api.data_language)
 
             return rows.mapNotNull { row ->
-                val items = row.getMediaItems(hl, api) ?: return@mapNotNull null
-                val default = MediaItemLayout(items, "".createUiString(), null, null, null)
-                when (val renderer = row.getRenderer()) {
-                    is YoutubeiBrowseResponse.YoutubeiShelf.MusicShelfRenderer -> {
-                        val mediaItem = renderer.bottomEndpoint?.getMediaItem()
-                        MediaItemLayout(
-                            items,
-                            (renderer.title?.first_text ?: "").createUiString(),
-                            null,
-                            null,
-                            mediaItem?.let { renderer.bottomEndpoint.getViewMore(it) }
-                        )
+                try {
+                    val items = try {
+                        row.getMediaItems(hl, api)
+                    } catch (e: NotImplementedError) {
+                        println("DEBUG: getMediaItems not implemented for row: ${e.message}")
+                        emptyList()
+                    } catch (e: NullPointerException) {
+                        println("DEBUG: Null pointer in getMediaItems for row: ${e.message}")
+                        emptyList()
+                    } catch (e: Exception) {
+                        println("DEBUG: Error getting media items for row: ${e.message}")
+                        emptyList()
                     }
-
-                    is YoutubeiHeaderContainer -> {
-                        val header = renderer.header?.header_renderer ?: return@mapNotNull default
-                        val titleTextRun = header.title ?: return@mapNotNull default
-                        val browseEndpoint =
-                            titleTextRun.runs?.first()?.navigationEndpoint?.browseEndpoint
-                        val browseId = browseEndpoint?.browseId
-                        val pageType = browseEndpoint?.browseEndpointContextSupportedConfigs
-                            ?.browseEndpointContextMusicConfig?.pageType
-                        val title = titleTextRun.first_text.createUiString()
-
-                        val subtitle = (header.subtitle ?: header.strapline)?.first_text?.let {
-                            RawUiString(
-                                it.lowercase().replaceFirstChar { char -> char.uppercase() })
-                        }
-                        val page = when {
-                            browseId?.startsWith("FEmusic_") == true ->
-                                PlainYoutubePage(browseId)
-
-                            pageType != null && browseId != null -> {
-                                val mediaItem =
-                                    YtmMediaItem.Type.fromBrowseEndpointType(pageType)
-                                        ?.itemFromId(browseId)
-                                mediaItem?.let { MediaItemYoutubePage(it, browseEndpoint.params) }
+                    
+                    if (items == null) {
+                        return@mapNotNull null
+                    }
+                    
+                    val default = MediaItemLayout(items, "".createUiString(), null, null, null)
+                    try {
+                        when (val renderer = row.getRenderer()) {
+                            is YoutubeiBrowseResponse.YoutubeiShelf.MusicShelfRenderer -> {
+                                val mediaItem = renderer.bottomEndpoint?.getMediaItem()
+                                MediaItemLayout(
+                                    items,
+                                    (renderer.title?.first_text ?: "").createUiString(),
+                                    null,
+                                    null,
+                                    mediaItem?.let { renderer.bottomEndpoint.getViewMore(it) }
+                                )
                             }
 
-                            else -> null
-                        }
-                        MediaItemLayout(items, title, subtitle, null, page)
-                    }
+                            is YoutubeiHeaderContainer -> {
+                                val header = renderer.header?.header_renderer ?: return@mapNotNull default
+                                val titleTextRun = header.title ?: return@mapNotNull default
+                                val browseEndpoint =
+                                    titleTextRun.runs?.first()?.navigationEndpoint?.browseEndpoint
+                                val browseId = browseEndpoint?.browseId
+                                val pageType = browseEndpoint?.browseEndpointContextSupportedConfigs
+                                    ?.browseEndpointContextMusicConfig?.pageType
+                                val title = titleTextRun.first_text.createUiString()
 
-                    else -> {
-                        println("Unknown shelf type: $renderer")
+                                val subtitle = (header.subtitle ?: header.strapline)?.first_text?.let {
+                                    RawUiString(
+                                        it.lowercase().replaceFirstChar { char -> char.uppercase() })
+                                }
+                                val page = when {
+                                    browseId?.startsWith("FEmusic_") == true ->
+                                        PlainYoutubePage(browseId)
+
+                                    pageType != null && browseId != null -> {
+                                        val mediaItem =
+                                            YtmMediaItem.Type.fromBrowseEndpointType(pageType)
+                                                ?.itemFromId(browseId)
+                                        mediaItem?.let { MediaItemYoutubePage(it, browseEndpoint.params) }
+                                    }
+
+                                    else -> null
+                                }
+                                MediaItemLayout(items, title, subtitle, null, page)
+                            }
+
+                            else -> {
+                                println("Unknown shelf type: $renderer")
+                                default
+                            }
+                        }
+                    } catch (e: Exception) {
+                        println("DEBUG: Error processing row renderer: ${e.message}")
                         default
                     }
+                } catch (e: Exception) {
+                    println("DEBUG: Error processing row: ${e.message}")
+                    null
                 }
             }
         }
