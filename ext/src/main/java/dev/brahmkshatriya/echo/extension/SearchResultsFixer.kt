@@ -120,6 +120,7 @@ object SearchResultsFixer {
                 is Album -> fixAlbum(item)
                 is Playlist -> fixPlaylist(item)
                 is Artist -> item
+                is User -> ModelTypeHelper.userToArtist(item)
                 else -> item
             }
         } catch (e: Exception) {
@@ -134,9 +135,52 @@ object SearchResultsFixer {
      */
     @JvmStatic
     fun fixTrack(track: Track): Track {
-        // Since track.artists is already List<Artist>, no conversion needed
-        // This method is kept for API compatibility but the logic is simplified
-        return track
+        val fixedArtists = track.artists.mapNotNull { artist ->
+            try {
+                when (artist) {
+                    is Artist -> artist
+                    is User -> ModelTypeHelper.userToArtist(artist)
+                    else -> {
+                        // Create a generic Artist when type doesn't match expected types
+                        Artist(
+                            id = (artist as? EchoMediaItem)?.id ?: "unknown-id",
+                            name = try {
+                                when (artist) {
+                                    is User -> artist.name ?: "Unknown Artist"
+                                    is EchoMediaItem -> artist.title ?: artist.id
+                                    else -> "Unknown Artist"
+                                }
+                            } catch (e: Exception) {
+                                "Unknown Artist"
+                            },
+                            cover = (artist as? EchoMediaItem)?.cover,
+                            subtitle = (artist as? EchoMediaItem)?.subtitle,
+                            extras = (artist as? EchoMediaItem)?.extras ?: emptyMap()
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                // If conversion fails, create a fallback Artist
+                Artist(
+                    id = "fallback-${track.id}-artist",
+                    name = "Unknown Artist",
+                    cover = null,
+                    subtitle = null,
+                    extras = mapOf("error" to "Conversion failed")
+                )
+            }
+        }
+        
+        val fixedAlbum = try {
+            track.album?.let { fixAlbum(it) }
+        } catch (e: Exception) {
+            track.album
+        }
+        
+        return track.copy(
+            artists = fixedArtists,
+            album = fixedAlbum
+        )
     }
     
     /**
@@ -144,9 +188,45 @@ object SearchResultsFixer {
      */
     @JvmStatic
     fun fixAlbum(album: Album): Album {
-        // Since album.artists is already List<Artist>, no conversion needed
-        // This method is kept for API compatibility but the logic is simplified
-        return album
+        val fixedArtists = album.artists.mapNotNull { artist ->
+            try {
+                when (artist) {
+                    is Artist -> artist
+                    is User -> ModelTypeHelper.userToArtist(artist)
+                    else -> {
+                        // Create a generic Artist when type doesn't match expected types
+                        Artist(
+                            id = (artist as? EchoMediaItem)?.id ?: "unknown-id",
+                            name = try {
+                                when (artist) {
+                                    is User -> artist.name ?: "Unknown Artist"
+                                    is EchoMediaItem -> artist.title ?: artist.id
+                                    else -> "Unknown Artist"
+                                }
+                            } catch (e: Exception) {
+                                "Unknown Artist"
+                            },
+                            cover = (artist as? EchoMediaItem)?.cover,
+                            subtitle = (artist as? EchoMediaItem)?.subtitle,
+                            extras = (artist as? EchoMediaItem)?.extras ?: emptyMap()
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                // If conversion fails, create a fallback Artist
+                Artist(
+                    id = "fallback-${album.id}-artist",
+                    name = "Unknown Artist",
+                    cover = null,
+                    subtitle = null,
+                    extras = mapOf("error" to "Conversion failed")
+                )
+            }
+        }
+        
+        return album.copy(
+            artists = fixedArtists
+        )
     }
     
     /**
@@ -154,8 +234,45 @@ object SearchResultsFixer {
      */
     @JvmStatic
     fun fixPlaylist(playlist: Playlist): Playlist {
-        // Since playlist.authors is already List<Artist>, no conversion needed
-        // This method is kept for API compatibility but the logic is simplified
-        return playlist
+        val fixedAuthors = playlist.authors.mapNotNull { author ->
+            try {
+                when (author) {
+                    is Artist -> author
+                    is User -> ModelTypeHelper.userToArtist(author)
+                    // Type checking is redundant, but we need to handle other unexpected types
+                    // that might appear in the list
+                    else -> {
+                        // Create a generic Artist when type doesn't match expected types
+                        Artist(
+                            id = (author as? EchoMediaItem)?.id ?: "unknown-id",
+                            name = try {
+                                // Since we're in the else branch, we know author is not User
+                                // but we still need to check if it's an EchoMediaItem
+                                if (author is EchoMediaItem) author.title ?: author.id
+                                else "Unknown Artist"
+                            } catch (e: Exception) {
+                                "Unknown Artist"
+                            },
+                            cover = (author as? EchoMediaItem)?.cover,
+                            subtitle = (author as? EchoMediaItem)?.subtitle,
+                            extras = (author as? EchoMediaItem)?.extras ?: emptyMap()
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                // If any conversion fails, create a fallback Artist
+                Artist(
+                    id = "fallback-${playlist.id}-author",
+                    name = "Unknown Artist",
+                    cover = null,
+                    subtitle = null,
+                    extras = mapOf("error" to "Conversion failed")
+                )
+            }
+        }
+        
+        return playlist.copy(
+            authors = fixedAuthors
+        )
     }
 }

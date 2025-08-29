@@ -1556,9 +1556,9 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         }
 
         return Feed(tabs) { tab ->
-            if (query.isNotBlank() && (tab == null || tab.id == "All")) {
-                // For search with query and "All" tab - return Shelf feed directly
-                val pagedData = PagedData.Single {
+            val pagedData = if (query.isNotBlank() && (tab == null || tab.id == "All")) {
+                // For search with query and "All" tab
+                PagedData.Single {
                     try {
                         val old = oldSearch?.takeIf { it.first == query }?.second
                         if (old != null) return@Single old
@@ -1573,38 +1573,28 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                         try {
                             search.categories.map { (itemLayout, _) ->
                                 try {
-                                    // Create a shelf directly from the item layout
-                                    val shelf = try {
-                                        itemLayout.toShelf(api, SINGLES, thumbnailQuality)
-                                    } catch (e: Exception) {
-                                        // If conversion fails, create a basic shelf
-                                        Shelf.Lists.Items(
-                                            id = "error-${System.currentTimeMillis()}",
-                                            title = "Content unavailable",
-                                            subtitle = "Unable to load this content",
-                                            list = emptyList(),
-                                            more = null
-                                        )
-                                    }
-                                    
-                                    // Fix shelf items for search results
-                                    try {
-                                        SearchResultsFixer.fixSearchResultShelf(shelf)
-                                    } catch (e: Exception) {
-                                        // If fixing fails, return the original shelf
-                                        shelf
+                                    itemLayout.items.mapNotNull { item ->
+                                        try {
+                                            val shelf = item.toEchoMediaItem(false, thumbnailQuality)?.toShelf()
+                                            if (shelf != null) {
+                                                // Fix shelf items for search results
+                                                try {
+                                                    SearchResultsFixer.fixSearchResultShelf(shelf)
+                                                } catch (e: Exception) {
+                                                    // If fixing fails, return the original shelf to prevent crashes
+                                                    shelf
+                                                }
+                                            } else null
+                                        } catch (e: Exception) {
+                                            // Skip items that cause exceptions
+                                            null
+                                        }
                                     }
                                 } catch (e: Exception) {
-                                    // If processing a category fails, create an error shelf
-                                    Shelf.Lists.Items(
-                                        id = "category-error-${System.currentTimeMillis()}",
-                                        title = "Category unavailable",
-                                        subtitle = "Unable to load this category",
-                                        list = emptyList(),
-                                        more = null
-                                    )
+                                    // If processing a category fails, return an empty list for this category
+                                    emptyList()
                                 }
-                            }
+                            }.flatten()
                         } catch (e: Exception) {
                             // If the entire process fails, return an empty list
                             emptyList()
@@ -1614,14 +1604,11 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                         emptyList()
                     }
                 }
-                
-                // Return the shelf feed directly
-                Feed.Data(pagedData)
-            } else {
-                // For tab-based search - return Shelf feed directly
-                val pagedData = PagedData.Continuous {
+            } else if (tab != null) {
+                // For tab-based search
+                PagedData.Continuous {
                     try {
-                        val params = tab?.id ?: return@Continuous Page(emptyList(), null)
+                        val params = tab.id
                         val continuation = it
                         val result = try {
                             songFeedEndPoint.getSongFeed(
@@ -1665,9 +1652,12 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                         Page(emptyList(), null)
                     }
                 }
-                
-                Feed.Data(pagedData)
+            } else {
+                // Empty result
+                PagedData.Single { listOf() }
             }
+            
+            Feed.Data(pagedData as PagedData<Shelf>)
         }
     }
 
@@ -1779,7 +1769,13 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         return Feed(emptyList()) { _ -> PagedData.Single { shelves }.toFeedData() }
     }
 
-  
+    // Note: We now use the UserToArtistHelper to safely convert User objects to Artists
+    // These methods are no longer needed and could cause casting issues:
+    // override suspend fun loadFeed(user: User): Feed<Shelf>? = loadFeed(UserToArtistHelper.safeConvertUserToArtist(user))
+    // override suspend fun loadUser(user: User): User {
+    //    loadArtist(UserToArtistHelper.safeConvertUserToArtist(user))
+    //    return loadedArtist!!.toUser(HIGH)
+    //}
 
     // This is now handled by followItem method
     // The code below was part of the followArtist implementation which is now handled by followItem
@@ -2122,6 +2118,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         
         return when(fixedItem) {
             is Track -> radio(fixedItem)
+            is Album -> radio(fixedItem)
             is Artist -> radio(fixedItem)
             is Playlist -> radio(fixedItem)
             else -> throw ClientException.NotSupported("Radio not supported for this media item type")

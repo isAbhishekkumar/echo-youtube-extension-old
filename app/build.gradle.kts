@@ -104,7 +104,7 @@ android {
         }
         
         debug {
-            isMinifyEnabled = false  // Disable for debugging
+            isMinifyEnabled = false  
         }
     }
 
