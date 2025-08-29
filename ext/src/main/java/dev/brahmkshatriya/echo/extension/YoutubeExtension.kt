@@ -2,7 +2,6 @@ package dev.brahmkshatriya.echo.extension
 
 import dev.brahmkshatriya.echo.common.clients.AlbumClient
 import dev.brahmkshatriya.echo.common.clients.ArtistClient
-import dev.brahmkshatriya.echo.common.clients.ArtistFollowClient
 import dev.brahmkshatriya.echo.common.clients.ExtensionClient
 import dev.brahmkshatriya.echo.common.clients.HomeFeedClient
 import dev.brahmkshatriya.echo.common.clients.LibraryFeedClient
@@ -10,13 +9,13 @@ import dev.brahmkshatriya.echo.common.clients.LoginClient
 import dev.brahmkshatriya.echo.common.clients.LyricsClient
 import dev.brahmkshatriya.echo.common.clients.PlaylistClient
 import dev.brahmkshatriya.echo.common.clients.PlaylistEditClient
+import dev.brahmkshatriya.echo.common.clients.QuickSearchClient
 import dev.brahmkshatriya.echo.common.clients.RadioClient
 import dev.brahmkshatriya.echo.common.clients.SearchFeedClient
 import dev.brahmkshatriya.echo.common.clients.ShareClient
 import dev.brahmkshatriya.echo.common.clients.TrackClient
-import dev.brahmkshatriya.echo.common.clients.TrackLikeClient
-import dev.brahmkshatriya.echo.common.clients.TrackerClient
-import dev.brahmkshatriya.echo.common.clients.UserClient
+import dev.brahmkshatriya.echo.common.clients.LikeClient
+import dev.brahmkshatriya.echo.common.clients.FollowClient
 import dev.brahmkshatriya.echo.common.helpers.ClientException
 import dev.brahmkshatriya.echo.common.helpers.Page
 import dev.brahmkshatriya.echo.common.helpers.PagedData
@@ -24,19 +23,20 @@ import dev.brahmkshatriya.echo.common.helpers.WebViewRequest
 import dev.brahmkshatriya.echo.common.models.Album
 import dev.brahmkshatriya.echo.common.models.Artist
 import dev.brahmkshatriya.echo.common.models.EchoMediaItem
-import dev.brahmkshatriya.echo.common.models.Feed.Companion.toFeed
+import dev.brahmkshatriya.echo.common.models.Feed
 import dev.brahmkshatriya.echo.common.models.Lyrics
+import dev.brahmkshatriya.echo.common.models.NetworkRequest
+import dev.brahmkshatriya.echo.common.models.NetworkRequest.Companion.toGetRequest
 import dev.brahmkshatriya.echo.common.models.Playlist
 import dev.brahmkshatriya.echo.common.models.QuickSearchItem
 import dev.brahmkshatriya.echo.common.models.Radio
-import dev.brahmkshatriya.echo.common.models.Request
-import dev.brahmkshatriya.echo.common.models.Request.Companion.toRequest
 import dev.brahmkshatriya.echo.common.models.Shelf
+import dev.brahmkshatriya.echo.common.models.Shelf.Lists.Type
 import dev.brahmkshatriya.echo.common.models.Streamable
 import dev.brahmkshatriya.echo.common.models.Streamable.Media.Companion.toServerMedia
 import dev.brahmkshatriya.echo.common.models.Tab
 import dev.brahmkshatriya.echo.common.models.Track
-import dev.brahmkshatriya.echo.common.models.TrackDetails
+import dev.brahmkshatriya.echo.common.models.Track.Playable
 import dev.brahmkshatriya.echo.common.models.User
 import dev.brahmkshatriya.echo.common.settings.Setting
 import dev.brahmkshatriya.echo.common.settings.SettingSwitch
@@ -72,11 +72,10 @@ import kotlinx.serialization.encodeToString
 import java.security.MessageDigest
 
 class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFeedClient,
-    RadioClient, AlbumClient, ArtistClient, UserClient, PlaylistClient, LoginClient.WebView,
-    TrackerClient, LibraryFeedClient, ShareClient, LyricsClient, ArtistFollowClient,
-    TrackLikeClient, PlaylistEditClient {
+    QuickSearchClient, RadioClient, AlbumClient, ArtistClient, PlaylistClient, LoginClient.WebView,
+    LibraryFeedClient, ShareClient, LyricsClient, LikeClient, FollowClient, PlaylistEditClient {
 
-    override val settingItems: List<Setting> = listOf(
+    override suspend fun getSettingItems(): List<Setting> = listOf(
         SettingSwitch(
             "High Thumbnail Quality",
             "high_quality",
@@ -580,8 +579,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             ".googlevideo.com"
         )
     }
-    override suspend fun getHomeTabs() = listOf<Tab>()
-    override fun getHomeFeed(tab: Tab?) = PagedData.Continuous {
+    override suspend fun loadHomeFeed(): Feed<Shelf> = PagedData.Continuous {
         val continuation = it
         val result = songFeedEndPoint.getSongFeed(
             params = null, continuation = continuation
@@ -1443,7 +1441,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         }
     }
 
-    override fun getShelves(track: Track) = PagedData.Single { loadRelated(track) }
+    override suspend fun loadFeed(track: Track): Feed<Shelf>? = PagedData.Single { loadRelated(track) }.toFeed()
 
     override suspend fun deleteQuickSearch(item: QuickSearchItem) {
         searchSuggestionsEndpoint.delete(item as QuickSearchItem.Query)
@@ -1462,30 +1460,40 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
 
 
     private var oldSearch: Pair<String, List<Shelf>>? = null
-    override fun searchFeed(query: String, tab: Tab?) = if (query.isNotBlank()) PagedData.Single {
-        val old = oldSearch?.takeIf {
-            it.first == query && (tab == null || tab.id == "All")
-        }?.second
-        if (old != null) return@Single old
-        val search = api.Search.search(query, tab?.id).getOrThrow()
-        search.categories.map { (itemLayout, _) ->
-            itemLayout.items.mapNotNull { item ->
-                item.toEchoMediaItem(false, thumbnailQuality)?.toShelf()
-            }
-        }.flatten()
-    }.toFeed() else if (tab != null) PagedData.Continuous {
-        val params = tab.id
-        val continuation = it
-        val result = songFeedEndPoint.getSongFeed(
-            params = params, continuation = continuation
-        ).getOrThrow()
-        val data = result.layouts.map { itemLayout ->
-            itemLayout.toShelf(api, SINGLES, thumbnailQuality)
+    override suspend fun loadSearchFeed(query: String): Feed<Shelf> {
+    val tabs = listOf(Tab("All", "All")) + searchTabs(query)
+    return Feed(tabs) { tab ->
+        if (query.isNotBlank()) {
+            val old = oldSearch?.takeIf {
+                it.first == query && (tab == null || tab.id == "All")
+            }?.second
+            if (old != null) return@Feed old.toFeedData()
+            val search = api.Search.search(query, tab?.id).getOrThrow()
+            val shelves = search.categories.map { (itemLayout, _) ->
+                itemLayout.items.mapNotNull { item ->
+                    item.toEchoMediaItem(false, thumbnailQuality)?.toShelf()
+                }
+            }.flatten()
+            PagedData.Single<Shelf> { shelves }.toFeedData()
+        } else if (tab != null) {
+            PagedData.Continuous {
+                val params = tab.id
+                val continuation = it
+                val result = songFeedEndPoint.getSongFeed(
+                    params = params, continuation = continuation
+                ).getOrThrow()
+                val data = result.layouts.map { itemLayout ->
+                    itemLayout.toShelf(api, SINGLES, thumbnailQuality)
+                }
+                Page(data, result.ctoken)
+            }.toFeedData()
+        } else {
+            PagedData.Single<Shelf> { listOf<Shelf>() }.toFeedData()
         }
-        Page(data, result.ctoken)
-    }.toFeed() else PagedData.Single<Shelf> { listOf() }.toFeed()
+    }
+}
 
-    override suspend fun searchTabs(query: String): List<Tab> {
+    private suspend fun searchTabs(query: String): List<Tab> {
         if (query.isNotBlank()) {
             val search = api.Search.search(query, null).getOrThrow()
             oldSearch = query to search.categories.map { (itemLayout, _) ->
@@ -1507,33 +1515,56 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         }
     }
 
-    override fun loadTracks(radio: Radio) =
-        PagedData.Single { json.decodeFromString<List<Track>>(radio.extras["tracks"]!!) }
+    override suspend fun loadTracks(radio: Radio): Feed<Track> =
+        PagedData.Single { json.decodeFromString<List<Track>>(radio.extras["tracks"]!!) }.toFeed()
 
-    override suspend fun radio(album: Album): Radio {
-        val track = api.LoadPlaylist.loadPlaylist(album.id).getOrThrow().items
-            ?.lastOrNull()?.toTrack(HIGH)
-            ?: throw Exception("No tracks found")
-        return radio(track, null)
-    }
-
-    override suspend fun radio(artist: Artist): Radio {
-        val id = "radio_${artist.id}"
-        val result = api.ArtistRadio.getArtistRadio(artist.id, null).getOrThrow()
-        val tracks = result.items.map { song -> song.toTrack(thumbnailQuality) }
-        return Radio(
-            id = id,
-            title = "${artist.name} Radio",
-            extras = mutableMapOf<String, String>().apply {
-                put("tracks", json.encodeToString(tracks))
+      override suspend fun radio(item: EchoMediaItem, context: EchoMediaItem?): Radio {
+        return when (item) {
+            is Album -> {
+                val track = api.LoadPlaylist.loadPlaylist(item.id).getOrThrow().items
+                    ?.lastOrNull()?.toTrack(HIGH)
+                    ?: throw Exception("No tracks found")
+                createRadio(track, context)
             }
-        )
+            is Artist -> {
+                val id = "radio_${item.id}"
+                val result = api.ArtistRadio.getArtistRadio(item.id, null).getOrThrow()
+                val tracks = result.items.map { song -> song.toTrack(thumbnailQuality) }
+                Radio(
+                    id = id,
+                    title = "${item.name} Radio",
+                    extras = mutableMapOf<String, String>().apply {
+                        put("tracks", json.encodeToString(tracks))
+                    }
+                )
+            }
+            is Track -> {
+                val id = "radio_${item.id}"
+                val cont = (context as? EchoMediaItem.Radio)?.extras?.get("cont")
+                val result = api.SongRadio.getSongRadio(item.id, cont).getOrThrow()
+                val tracks = result.items.map { song -> song.toTrack(thumbnailQuality) }
+                Radio(
+                    id = id,
+                    title = "${item.title} Radio",
+                    extras = mutableMapOf<String, String>().apply {
+                        put("tracks", json.encodeToString(tracks))
+                        result.continuation?.let { put("cont", it) }
+                    }
+                )
+            }
+            is User -> radio(item.toArtist(), context)
+            is Playlist -> {
+                val track = loadTracks(item).loadAll().lastOrNull()
+                    ?: throw Exception("No tracks found")
+                createRadio(track, context)
+            }
+            else -> throw Exception("Unsupported media type for radio")
+        }
     }
 
-
-    override suspend fun radio(track: Track, context: EchoMediaItem?): Radio {
+    private suspend fun createRadio(track: Track, context: EchoMediaItem?): Radio {
         val id = "radio_${track.id}"
-        val cont = (context as? EchoMediaItem.Lists.RadioItem)?.radio?.extras?.get("cont")
+        val cont = (context as? EchoMediaItem.Radio)?.extras?.get("cont")
         val result = api.SongRadio.getSongRadio(track.id, cont).getOrThrow()
         val tracks = result.items.map { song -> song.toTrack(thumbnailQuality) }
         return Radio(
@@ -1546,17 +1577,10 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         )
     }
 
-    override suspend fun radio(user: User) = radio(user.toArtist())
-
-    override suspend fun radio(playlist: Playlist): Radio {
-        val track = loadTracks(playlist).loadAll().lastOrNull()
-            ?: throw Exception("No tracks found")
-        return radio(track, null)
-    }
-
-    override fun getShelves(album: Album): PagedData<Shelf> = PagedData.Single {
-        loadTracks(album).loadAll().lastOrNull()?.let { loadRelated(loadTrack(it)) }
+    override suspend fun loadFeed(album: Album): Feed<Shelf>? = PagedData.Single {
+        loadTracks(album)?.loadAll()?.lastOrNull()?.let { loadRelated(loadTrack(it)) }
             ?: emptyList()
+    }.toFeed()
     }
 
 
@@ -1569,7 +1593,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         return ytmPlaylist.toAlbum(false, HIGH)
     }
 
-    override fun loadTracks(album: Album): PagedData<Track> = trackMap[album.id]!!
+    override suspend fun loadTracks(album: Album): Feed<Track>? = trackMap[album.id]!!.toFeed()
 
     private suspend fun getArtistMediaItems(artist: Artist): List<Shelf> {
         val result =
@@ -1598,20 +1622,13 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         } ?: emptyList()
     }
 
-    override fun getShelves(artist: Artist) = PagedData.Single {
+    override suspend fun loadFeed(artist: Artist): Feed<Shelf> = PagedData.Single {
         getArtistMediaItems(artist)
-    }
-
-    override fun getShelves(user: User) = getShelves(user.toArtist())
+    }.toFeed()
 
     override suspend fun loadUser(user: User): User {
         loadArtist(user.toArtist())
         return loadedArtist!!.toUser(HIGH)
-    }
-
-    override suspend fun followArtist(artist: Artist, follow: Boolean) {
-        val subId = artist.extras["subId"] ?: throw Exception("No subId found")
-        withUserAuth { it.SetSubscribedToArtist.setSubscribedToArtist(artist.id, follow, subId) }
     }
 
     private var loadedArtist: YtmArtist? = null
@@ -1621,17 +1638,17 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         return result.toArtist(HIGH)
     }
 
-    override fun getShelves(playlist: Playlist) = PagedData.Single {
+    override suspend fun loadFeed(playlist: Playlist): Feed<Shelf>? = PagedData.Single {
         val cont = playlist.extras["relatedId"] ?: throw Exception("No related id found.")
         if (cont.startsWith("id://")) {
             val id = cont.substring(5)
-            getShelves(loadTrack(Track(id, ""))).loadList(null).data
-                .filterIsInstance<Shelf.Category>()
+            loadFeed(loadTrack(Track(id, "", false)))?.pagedDataOfFirst()?.loadList(null)?.data
+                ?.filterIsInstance<Shelf.Category>() ?: emptyList()
         } else {
             val continuation = songRelatedEndpoint.loadFromPlaylist(cont).getOrThrow()
             continuation.map { it.toShelf(api, language, thumbnailQuality) }
         }
-    }
+    }.toFeed()
 
 
     override suspend fun loadPlaylist(playlist: Playlist): Playlist {
@@ -1644,7 +1661,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         return ytmPlaylist.toPlaylist(HIGH, related)
     }
 
-    override fun loadTracks(playlist: Playlist): PagedData<Track> = trackMap[playlist.id]!!
+    override suspend fun loadTracks(playlist: Playlist): Feed<Track> = trackMap[playlist.id]!!.toFeed()
 
 
     override val webViewRequest = object : WebViewRequest.Cookie<List<User>> {

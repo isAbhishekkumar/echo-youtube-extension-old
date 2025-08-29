@@ -3,13 +3,14 @@ package dev.brahmkshatriya.echo.extension
 import dev.brahmkshatriya.echo.common.helpers.PagedData
 import dev.brahmkshatriya.echo.common.models.Album
 import dev.brahmkshatriya.echo.common.models.Artist
-import dev.brahmkshatriya.echo.common.models.Date.Companion.toDate
 import dev.brahmkshatriya.echo.common.models.EchoMediaItem
 import dev.brahmkshatriya.echo.common.models.ImageHolder
 import dev.brahmkshatriya.echo.common.models.ImageHolder.Companion.toImageHolder
 import dev.brahmkshatriya.echo.common.models.Playlist
 import dev.brahmkshatriya.echo.common.models.Shelf
+import dev.brahmkshatriya.echo.common.models.Shelf.Lists.Type
 import dev.brahmkshatriya.echo.common.models.Track
+import dev.brahmkshatriya.echo.common.models.Track.Playable
 import dev.brahmkshatriya.echo.common.models.User
 import dev.brahmkshatriya.echo.extension.YoutubeExtension.Companion.ENGLISH
 import dev.brahmkshatriya.echo.extension.YoutubeExtension.Companion.SINGLES
@@ -32,11 +33,13 @@ suspend fun MediaItemLayout.toShelf(
 ): Shelf {
     val single = title?.getString(ENGLISH) == SINGLES
     return Shelf.Lists.Items(
+        id = title?.getString(language) ?: "Unknown",
         title = title?.getString(language) ?: "Unknown",
-        subtitle = subtitle?.getString(language),
         list = items.mapNotNull { item ->
             item.toEchoMediaItem(single, quality)
         },
+        subtitle = subtitle?.getString(language),
+        type = Type.Linear,
         more = view_more?.getBrowseParamsData()?.browse_id?.let { id ->
             PagedData.Single {
                 val rows =
@@ -54,16 +57,15 @@ fun YtmMediaItem.toEchoMediaItem(
     quality: ThumbnailProvider.Quality
 ): EchoMediaItem? {
     return when (this) {
-        is YtmSong -> EchoMediaItem.TrackItem(toTrack(quality))
+        is YtmSong -> toTrack(quality)
         is YtmPlaylist -> when (type) {
-            YtmPlaylist.Type.ALBUM -> EchoMediaItem.Lists.AlbumItem(toAlbum(single, quality))
+            YtmPlaylist.Type.ALBUM -> toAlbum(single, quality)
             else -> {
-                if (id != "VLSE") EchoMediaItem.Lists.PlaylistItem(toPlaylist(quality))
+                if (id != "VLSE") toPlaylist(quality)
                 else null
             }
         }
-
-        is YtmArtist -> toArtist(quality).let { EchoMediaItem.Profile.ArtistItem(it) }
+        is YtmArtist -> toArtist(quality)
         else -> null
     }
 }
@@ -82,9 +84,9 @@ fun YtmPlaylist.toPlaylist(
         isEditable = bool.getOrNull(1) ?: false,
         cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(mapOf()),
         authors = artists?.map { it.toUser(quality) } ?: emptyList(),
-        tracks = item_count,
+        trackCount = item_count,
         duration = total_duration,
-        creationDate = year?.toDate(),
+        creationDate = null, // TODO: Fix date handling
         description = description,
         extras = extras,
     )
@@ -103,8 +105,8 @@ fun YtmPlaylist.toAlbum(
         isExplicit = bool.firstOrNull() ?: false,
         cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(mapOf()),
         artists = artists?.map { it.toArtist(quality) } ?: emptyList(),
-        tracks = item_count ?: if (single) 1 else null,
-        releaseDate = year?.toDate(),
+        trackCount = item_count ?: if (single) 1 else null,
+        releaseDate = null, // TODO: Fix date handling
         label = null,
         duration = total_duration,
         description = description,
@@ -121,14 +123,18 @@ fun YtmSong.toTrack(
     return Track(
         id = id,
         title = name ?: "Unknown",
-        artists = artists?.map { it.toArtist(quality) } ?: emptyList(),
         cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(crop = true)
             ?: getCover(id, quality),
+        artists = artists?.map { it.toArtist(quality) } ?: emptyList(),
         album = album,
         duration = duration,
-        plays = null,
-        releaseDate = album?.releaseDate,
-        isLiked = is_explicit,
+        isExplicit = is_explicit,
+        isPlayable = Playable.Yes,
+        isLikeable = true,
+        isFollowable = false,
+        isSaveable = true,
+        isHideable = true,
+        isShareable = true,
         extras = extras,
     )
 }
@@ -136,7 +142,7 @@ fun YtmSong.toTrack(
 private fun getCover(
     id: String,
     quality: ThumbnailProvider.Quality
-): ImageHolder.UrlRequestImageHolder {
+): ImageHolder {
     return when (quality) {
         ThumbnailProvider.Quality.LOW -> "https://img.youtube.com/vi/$id/mqdefault.jpg"
         ThumbnailProvider.Quality.HIGH -> "https://img.youtube.com/vi/$id/maxresdefault.jpg"
@@ -150,12 +156,16 @@ fun YtmArtist.toArtist(
         id = id,
         name = name ?: "Unknown",
         cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(mapOf()),
-        description = description,
-        followers = subscriber_count,
-        isFollowing = subscribed ?: false,
+        bio = description,
         extras = mutableMapOf<String, String>().apply {
             subscribe_channel_id?.let { put("subId", it) }
-        }
+        },
+        isRadioSupported = true,
+        isFollowable = true,
+        isSaveable = true,
+        isLikeable = false,
+        isHideable = false,
+        isShareable = true,
     )
 }
 
@@ -174,7 +184,13 @@ fun User.toArtist(): Artist {
         id = id,
         name = name,
         cover = cover,
-        extras = extras
+        extras = extras,
+        isRadioSupported = true,
+        isFollowable = true,
+        isSaveable = true,
+        isLikeable = false,
+        isHideable = false,
+        isShareable = true,
     )
 }
 
