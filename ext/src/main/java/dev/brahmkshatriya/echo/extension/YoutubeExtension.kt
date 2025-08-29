@@ -1556,9 +1556,9 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         }
 
         return Feed(tabs) { tab ->
-            val pagedData = if (query.isNotBlank() && (tab == null || tab.id == "All")) {
-                // For search with query and "All" tab
-                PagedData.Single {
+            if (query.isNotBlank() && (tab == null || tab.id == "All")) {
+                // For search with query and "All" tab - return EchoMediaItem feed
+                val pagedData = PagedData.Single {
                     try {
                         val old = oldSearch?.takeIf { it.first == query }?.second
                         if (old != null) return@Single old
@@ -1604,9 +1604,12 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                         emptyList()
                     }
                 }
-            } else if (tab != null) {
-                // For tab-based search
-                PagedData.Continuous {
+                
+                // Convert EchoMediaItem to Shelf for the feed
+                Feed.Data(pagedData.map { item -> Shelf.Item(item) })
+            } else {
+                // For tab-based search - return Shelf feed directly
+                val pagedData = PagedData.Continuous {
                     try {
                         val params = tab.id
                         val continuation = it
@@ -1652,12 +1655,9 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                         Page(emptyList(), null)
                     }
                 }
-            } else {
-                // Empty result
-                PagedData.Single { listOf() }
+                
+                Feed.Data(pagedData)
             }
-            
-            Feed.Data(pagedData as PagedData<Shelf>)
         }
     }
 
@@ -1769,13 +1769,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         return Feed(emptyList()) { _ -> PagedData.Single { shelves }.toFeedData() }
     }
 
-    // Note: We now use the UserToArtistHelper to safely convert User objects to Artists
-    // These methods are no longer needed and could cause casting issues:
-    // override suspend fun loadFeed(user: User): Feed<Shelf>? = loadFeed(UserToArtistHelper.safeConvertUserToArtist(user))
-    // override suspend fun loadUser(user: User): User {
-    //    loadArtist(UserToArtistHelper.safeConvertUserToArtist(user))
-    //    return loadedArtist!!.toUser(HIGH)
-    //}
+  
 
     // This is now handled by followItem method
     // The code below was part of the followArtist implementation which is now handled by followItem
@@ -2118,7 +2112,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         
         return when(fixedItem) {
             is Track -> radio(fixedItem)
-            is Album -> radio(fixedItem)
             is Artist -> radio(fixedItem)
             is Playlist -> radio(fixedItem)
             else -> throw ClientException.NotSupported("Radio not supported for this media item type")
