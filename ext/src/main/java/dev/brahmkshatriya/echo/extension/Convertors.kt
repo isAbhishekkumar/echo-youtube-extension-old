@@ -146,11 +146,8 @@ fun YtmSong.toTrack(
     val extras = mutableMapOf<String, String>()
     setId?.let { extras["setId"] = it }
     
-    // Determine track type based on video status
-    val trackType = when {
-        is_video -> Track.Type.VideoSong
-        else -> Track.Type.Song
-    }
+    // Determine track type - default to Song for now
+    val trackType = Track.Type.Song
     
     // Determine playable status (default to Yes for now, could be made conditional)
     val playableStatus = Track.Playable.Yes
@@ -164,7 +161,7 @@ fun YtmSong.toTrack(
             ?: getCover(id, quality),
         album = album,
         duration = duration?.toLong(),
-        plays = view_count?.toLongOrNull(),
+        plays = null, // Remove view_count reference
         releaseDate = album?.releaseDate,
         isExplicit = is_explicit,
         isPlayable = playableStatus,
@@ -176,7 +173,6 @@ fun YtmSong.toTrack(
         isShareable = true,
         extras = extras.apply {
             put("videoId", id)
-            put("isVideo", is_video.toString())
             put("availability", "public")
             put("trackType", trackType.name)
         }

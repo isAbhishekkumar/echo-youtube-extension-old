@@ -66,7 +66,7 @@ open class EchoSongEndPoint(override val api: YoutubeiApi) : ApiEndpoint() {
             tabs[0].tabRenderer.content!!.musicQueueRenderer.content!!.playlistPanelRenderer.contents.first().playlistPanelVideoRenderer!!
 
         val title: String = video.title.first_text
-        val liked =
+        val isLiked =
             responseData.playerOverlays?.playerOverlayRenderer?.actions?.firstOrNull()?.likeButtonRenderer?.likeStatus == "LIKE"
 
         val artists: List<YtmArtist> = video.getArtists().getOrThrow() ?: emptyList()
@@ -82,11 +82,12 @@ open class EchoSongEndPoint(override val api: YoutubeiApi) : ApiEndpoint() {
             artists = artists.map { it.toArtist(ThumbnailProvider.Quality.HIGH) },
             album = album?.toAlbum(false, ThumbnailProvider.Quality.HIGH),
             duration = duration,
-            isLiked = liked,
             extras = mutableMapOf<String, String>().apply {
                 relatedBrowseId?.let { put("relatedId", it) }
                 lyricsBrowseId?.let { put("lyricsId", it) }
+                put("isLiked", isLiked.toString())
             },
+
         )
     }
 }

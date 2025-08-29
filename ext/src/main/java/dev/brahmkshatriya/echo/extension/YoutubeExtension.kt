@@ -1449,27 +1449,13 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                 ).takeIf { audioFiles.isNotEmpty() }
             ),
             plays = video.videoDetails.viewCount?.toLongOrNull(),
-            // Enhance with additional metadata from video details
-            background = newTrack.background,
-            genres = newTrack.genres,
-            isrc = newTrack.isrc,
-            albumOrderNumber = newTrack.albumOrderNumber,
-            albumDiscNumber = newTrack.albumDiscNumber,
-            isExplicit = video.videoDetails.isFamilySafe?.let { !it } ?: newTrack.isExplicit,
-            subtitle = newTrack.subtitle,
             // Update extras with video-specific information
             extras = newTrack.extras.toMutableMap().apply {
                 put("videoId", track.id)
-                put("channelId", video.videoDetails.channelId)
-                put("author", video.videoDetails.author)
-                put("isFamilySafe", (video.videoDetails.isFamilySafe ?: true).toString())
-                put("isPrivate", (video.videoDetails.isPrivate ?: false).toString())
-                put("isUnlisted", (video.videoDetails.isUnlisted ?: false).toString())
-                put("isLiveContent", (video.videoDetails.isLiveContent ?: false).toString())
+                put("channelId", video.videoDetails.channelId ?: "")
+                put("author", video.videoDetails.author ?: "")
                 put("viewCount", (video.videoDetails.viewCount ?: "0").toString())
-                put("likeCount", (video.videoDetails.likeCount ?: "0").toString())
                 put("lengthSeconds", (video.videoDetails.lengthSeconds ?: "0").toString())
-                put("keywords", video.videoDetails.keywords?.joinToString(",") ?: "")
             }
         )
         
