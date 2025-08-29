@@ -1605,13 +1605,15 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                     }
                 }
                 
-                // Convert EchoMediaItem to Shelf for the feed
-                Feed.Data(pagedData.map { item -> Shelf.Item(item) })
+                // Convert EchoMediaItem to Shelf for the feed - create a proper shelf feed
+                Feed.Data(PagedData.Single { 
+                    pagedData.loadAll().map { item -> Shelf.Item(item) } 
+                })
             } else {
                 // For tab-based search - return Shelf feed directly
                 val pagedData = PagedData.Continuous {
                     try {
-                        val params = tab.id
+                        val params = tab?.id ?: return@Continuous Page(emptyList(), null)
                         val continuation = it
                         val result = try {
                             songFeedEndPoint.getSongFeed(
