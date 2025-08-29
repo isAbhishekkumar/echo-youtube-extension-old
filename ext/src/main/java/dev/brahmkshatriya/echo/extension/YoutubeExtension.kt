@@ -398,7 +398,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                 }
                 if (url != null) {
                     Streamable.Source.Http(
-                        request = url.toRequest(),
+                        request = url.toGetRequest(),
                         quality = audioBitrate
                     ).also {
                         println("DEBUG: Created audio source for itag $itag with bitrate $audioBitrate")
@@ -585,7 +585,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             params = null, continuation = continuation
         ).getOrThrow()
         val data = result.layouts.map { itemLayout ->
-            itemLayout.toShelf(api, SINGLES, thumbnailQuality)
+            itemLayout.toShelf(api, SINGLES, if (settings.getBoolean("high_quality") == true) HIGH else LOW)
         }
         Page(data, result.ctoken)
     }.toFeed()
@@ -803,7 +803,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         }
         
         return Streamable.Source.Http(
-            finalUrl.toRequest(),
+            finalUrl.toGetRequest(),
             quality = 0 
         )
     }
@@ -913,7 +913,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                                 }
                                                 else -> {
                                                     Streamable.Source.Http(
-                                                        freshUrl.toRequest(),
+                                                        freshUrl.toGetRequest(),
                                                         quality = qualityValue
                                                     )
                                                 }
@@ -936,7 +936,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                             }
                                             else -> {
                                                 Streamable.Source.Http(
-                                                    freshUrl.toRequest(),
+                                                    freshUrl.toGetRequest(),
                                                     quality = qualityValue
                                                 )
                                             }
@@ -1119,7 +1119,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                             }
                                             else -> {
                                                 Streamable.Source.Http(
-                                                    freshUrl.toRequest(),
+                                                    freshUrl.toGetRequest(),
                                                     quality = qualityValue
                                                 )
                                             }
@@ -1141,7 +1141,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                             }
                                             else -> {
                                                 Streamable.Source.Http(
-                                                    freshUrl.toRequest(),
+                                                    freshUrl.toGetRequest(),
                                                     quality = qualityValue
                                                 )
                                             }
@@ -1361,7 +1361,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                 }
                 else -> {
                     Streamable.Source.Http(
-                        enhancedAudioUrl.toRequest(),
+                        enhancedAudioUrl.toGetRequest(),
                         quality = 192000 
                     )
                 }
@@ -1375,7 +1375,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                 }
                 else -> {
                     Streamable.Source.Http(
-                        enhancedVideoUrl.toRequest(),
+                        enhancedVideoUrl.toGetRequest(),
                         quality = 1000000 
                     )
                 }
@@ -1391,7 +1391,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         }
     }
 
-    override suspend fun loadTrack(track: Track) = coroutineScope {
+    override suspend fun loadTrack(track: Track, isDownload: Boolean): Track = coroutineScope {
         ensureVisitorId()
         
         println("DEBUG: Loading track: ${track.title} (${track.id})")
@@ -1437,7 +1437,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     private suspend fun loadRelated(track: Track) = track.run {
         val relatedId = extras["relatedId"] ?: throw Exception("No related id found.")
         songFeedEndPoint.getSongFeed(browseId = relatedId).getOrThrow().layouts.map {
-            it.toShelf(api, SINGLES, thumbnailQuality)
+            it.toShelf(api, SINGLES, if (settings.getBoolean("high_quality") == true) HIGH else LOW)
         }
     }
 
@@ -1467,14 +1467,14 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             val old = oldSearch?.takeIf {
                 it.first == query && (tab == null || tab.id == "All")
             }?.second
-            if (old != null) return@Feed old.toFeedData()
+            if (old != null) return@Feed old.toFeedData(buttons = null, background = null)
             val search = api.Search.search(query, tab?.id).getOrThrow()
             val shelves = search.categories.map { (itemLayout, _) ->
                 itemLayout.items.mapNotNull { item ->
-                    item.toEchoMediaItem(false, thumbnailQuality)?.toShelf()
+                    item.toEchoMediaItem(false, if (settings.getBoolean("high_quality") == true) HIGH else LOW)?.toShelf()
                 }
             }.flatten()
-            PagedData.Single<Shelf> { shelves }.toFeedData()
+            PagedData.Single<Shelf> { shelves }.toFeedData(buttons = null, background = null)
         } else if (tab != null) {
             PagedData.Continuous {
                 val params = tab.id
@@ -1483,12 +1483,12 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                     params = params, continuation = continuation
                 ).getOrThrow()
                 val data = result.layouts.map { itemLayout ->
-                    itemLayout.toShelf(api, SINGLES, thumbnailQuality)
+                    itemLayout.toShelf(api, SINGLES, if (settings.getBoolean("high_quality") == true) HIGH else LOW)
                 }
                 Page(data, result.ctoken)
-            }.toFeedData()
+            }.toFeedData(buttons = null, background = null)
         } else {
-            PagedData.Single<Shelf> { listOf<Shelf>() }.toFeedData()
+            PagedData.Single<Shelf> { listOf<Shelf>() }.toFeedData(buttons = null, background = null)
         }
     }
 }
@@ -1497,7 +1497,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         if (query.isNotBlank()) {
             val search = api.Search.search(query, null).getOrThrow()
             oldSearch = query to search.categories.map { (itemLayout, _) ->
-                itemLayout.toShelf(api, SINGLES, thumbnailQuality)
+                itemLayout.toShelf(api, SINGLES, if (settings.getBoolean("high_quality") == true) HIGH else LOW)
             }
             val tabs = search.categories.mapNotNull { (item, filter) ->
                 filter?.let {
@@ -1518,31 +1518,17 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun loadTracks(radio: Radio): Feed<Track> =
         PagedData.Single { json.decodeFromString<List<Track>>(radio.extras["tracks"]!!) }.toFeed()
 
-      override suspend fun radio(item: EchoMediaItem, context: EchoMediaItem?): Radio {
+    override suspend fun loadRadio(radio: Radio): Radio {
+        return radio // For now, just return the radio as-is
+    }
+
+    suspend fun createRadio(item: EchoMediaItem, context: EchoMediaItem?): Radio {
         return when (item) {
-            is Album -> {
-                val track = api.LoadPlaylist.loadPlaylist(item.id).getOrThrow().items
-                    ?.lastOrNull()?.toTrack(HIGH)
-                    ?: throw Exception("No tracks found")
-                createRadio(track, context)
-            }
-            is Artist -> {
-                val id = "radio_${item.id}"
-                val result = api.ArtistRadio.getArtistRadio(item.id, null).getOrThrow()
-                val tracks = result.items.map { song -> song.toTrack(thumbnailQuality) }
-                Radio(
-                    id = id,
-                    title = "${item.name} Radio",
-                    extras = mutableMapOf<String, String>().apply {
-                        put("tracks", json.encodeToString(tracks))
-                    }
-                )
-            }
             is Track -> {
                 val id = "radio_${item.id}"
-                val cont = (context as? EchoMediaItem.Radio)?.extras?.get("cont")
+                val cont = (context as? Radio)?.extras?.get("cont")
                 val result = api.SongRadio.getSongRadio(item.id, cont).getOrThrow()
-                val tracks = result.items.map { song -> song.toTrack(thumbnailQuality) }
+                val tracks = result.items.map { song -> song.toTrack(if (settings.getBoolean("high_quality") == true) HIGH else LOW) }
                 Radio(
                     id = id,
                     title = "${item.title} Radio",
@@ -1552,7 +1538,19 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                     }
                 )
             }
-            is User -> radio(item.toArtist(), context)
+            is Artist -> {
+                val id = "radio_${item.id}"
+                val result = api.ArtistRadio.getArtistRadio(item.id, null).getOrThrow()
+                val tracks = result.items.map { song -> song.toTrack(if (settings.getBoolean("high_quality") == true) HIGH else LOW) }
+                Radio(
+                    id = id,
+                    title = "${item.name} Radio",
+                    extras = mutableMapOf<String, String>().apply {
+                        put("tracks", json.encodeToString(tracks))
+                    }
+                )
+            }
+            is User -> createRadio(item.toArtist(), context)
             is Playlist -> {
                 val track = loadTracks(item).loadAll().lastOrNull()
                     ?: throw Exception("No tracks found")
@@ -1564,9 +1562,9 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
 
     private suspend fun createRadio(track: Track, context: EchoMediaItem?): Radio {
         val id = "radio_${track.id}"
-        val cont = (context as? EchoMediaItem.Radio)?.extras?.get("cont")
+        val cont = (context as? Radio)?.extras?.get("cont")
         val result = api.SongRadio.getSongRadio(track.id, cont).getOrThrow()
-        val tracks = result.items.map { song -> song.toTrack(thumbnailQuality) }
+        val tracks = result.items.map { song -> song.toTrack(if (settings.getBoolean("high_quality") == true) HIGH else LOW) }
         return Radio(
             id = id,
             title = "${track.title} Radio",
@@ -1578,19 +1576,18 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     }
 
     override suspend fun loadFeed(album: Album): Feed<Shelf>? = PagedData.Single {
-        loadTracks(album)?.loadAll()?.lastOrNull()?.let { loadRelated(loadTrack(it)) }
-            ?: emptyList()
+        val tracks = loadTracks(album)
+        val lastTrack = tracks?.loadAll()?.lastOrNull()
+        lastTrack?.let { loadRelated(loadTrack(it, false)) } ?: emptyList()
     }.toFeed()
-    }
-
 
     private val trackMap = mutableMapOf<String, PagedData<Track>>()
     override suspend fun loadAlbum(album: Album): Album {
         val (ytmPlaylist, _, data) = playlistEndPoint.loadFromPlaylist(
-            album.id, null, thumbnailQuality
+            album.id, null, if (settings.getBoolean("high_quality") == true) HIGH else LOW
         )
         trackMap[ytmPlaylist.id] = data
-        return ytmPlaylist.toAlbum(false, HIGH)
+        return ytmPlaylist.toAlbum(false, if (settings.getBoolean("high_quality") == true) HIGH else LOW)
     }
 
     override suspend fun loadTracks(album: Album): Feed<Track>? = trackMap[album.id]!!.toFeed()
@@ -1604,17 +1601,17 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             val title = it.title?.getString(ENGLISH)
             val single = title == SINGLES
             Shelf.Lists.Items(
-                title = it.title?.getString(language) ?: "Unknown",
-                subtitle = it.subtitle?.getString(language),
+                title = it.title?.getString(ENGLISH) ?: "Unknown",
+                subtitle = it.subtitle?.getString(ENGLISH),
                 list = it.items?.mapNotNull { item ->
-                    item.toEchoMediaItem(single, thumbnailQuality)
+                    item.toEchoMediaItem(single, if (settings.getBoolean("high_quality") == true) HIGH else LOW)
                 } ?: emptyList(),
                 more = it.view_more?.getBrowseParamsData()?.let { param ->
                     PagedData.Single {
                         val data = artistMoreEndpoint.load(param)
                         data.map { row ->
                             row.items.mapNotNull { item ->
-                                item.toEchoMediaItem(single, thumbnailQuality)
+                                item.toEchoMediaItem(single, if (settings.getBoolean("high_quality") == true) HIGH else LOW)
                             }
                         }.flatten()
                     }
@@ -1628,25 +1625,28 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
 
     override suspend fun loadUser(user: User): User {
         loadArtist(user.toArtist())
-        return loadedArtist!!.toUser(HIGH)
+        return loadedArtist!!.toUser(if (settings.getBoolean("high_quality") == true) HIGH else LOW)
     }
 
     private var loadedArtist: YtmArtist? = null
     override suspend fun loadArtist(artist: Artist): Artist {
         val result = artistEndPoint.loadArtist(artist.id)
         loadedArtist = result
-        return result.toArtist(HIGH)
+        return result.toArtist(if (settings.getBoolean("high_quality") == true) HIGH else LOW)
     }
 
     override suspend fun loadFeed(playlist: Playlist): Feed<Shelf>? = PagedData.Single {
         val cont = playlist.extras["relatedId"] ?: throw Exception("No related id found.")
         if (cont.startsWith("id://")) {
             val id = cont.substring(5)
-            loadFeed(loadTrack(Track(id, "", false)))?.pagedDataOfFirst()?.loadList(null)?.data
-                ?.filterIsInstance<Shelf.Category>() ?: emptyList()
+            loadFeed(loadTrack(Track(id, "", isPlayable = Playable.Yes)))?.let { feed ->
+                // Load the first page of the feed
+                val firstPage = feed.getPagedData(null)
+                firstPage.pagedData.loadAll()
+            }?.filterIsInstance<Shelf>() ?: emptyList()
         } else {
             val continuation = songRelatedEndpoint.loadFromPlaylist(cont).getOrThrow()
-            continuation.map { it.toShelf(api, language, thumbnailQuality) }
+            continuation.map { it.toShelf(api, ENGLISH, if (settings.getBoolean("high_quality") == true) HIGH else LOW) }
         }
     }.toFeed()
 
@@ -1655,20 +1655,19 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         val (ytmPlaylist, related, data) = playlistEndPoint.loadFromPlaylist(
             playlist.id,
             null,
-            thumbnailQuality
+            if (settings.getBoolean("high_quality") == true) HIGH else LOW
         )
         trackMap[ytmPlaylist.id] = data
-        return ytmPlaylist.toPlaylist(HIGH, related)
+        return ytmPlaylist.toPlaylist(if (settings.getBoolean("high_quality") == true) HIGH else LOW, related)
     }
 
     override suspend fun loadTracks(playlist: Playlist): Feed<Track> = trackMap[playlist.id]!!.toFeed()
 
-
     override val webViewRequest = object : WebViewRequest.Cookie<List<User>> {
         override val initialUrl =
-            "https://accounts.google.com/v3/signin/identifier?dsh=S1527412391%3A1678373417598386&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26hl%3Den-GB%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F%253Fcbrd%253D1%26feature%3D__FEATURE__&hl=en-GB&ifkv=AWnogHfK4OXI8X1zVlVjzzjybvICXS4ojnbvzpE4Gn_Pfddw7fs3ERdfk-q3tRimJuoXjfofz6wuzg&ltmpl=music&passive=true&service=youtube&uilel=3&flowName=GlifWebSignIn&flowEntry=ServiceLogin".toRequest()
+            "https://accounts.google.com/v3/signin/identifier?dsh=S1527412391%3A1678373417598386&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26hl%3Den-GB%26next%3Dhttps%253A%252F%252Fmusic.youtube.com%252F%253Fcbrd%253D1%26feature%3D__FEATURE__&hl=en-GB&ifkv=AWnogHfK4OXI8X1zVlVjzzjybvICXS4ojnbvzpE4Gn_Pfddw7fs3ERdfk-q3tRimJuoXjfofz6wuzg&ltmpl=music&passive=true&service=youtube&uilel=3&flowName=GlifWebSignIn&flowEntry=ServiceLogin".toGetRequest()
         override val stopUrlRegex = "https://music\\.youtube\\.com/.*".toRegex()
-        override suspend fun onStop(url: Request, cookie: String): List<User> {
+        override suspend fun onStop(url: NetworkRequest, cookie: String): List<User> {
             if (!cookie.contains("SAPISID")) throw Exception("Login Failed, could not load SAPISID")
             val auth = run {
                 val currentTime = System.currentTimeMillis() / 1000
@@ -1679,9 +1678,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                 "SAPISIDHASH ${currentTime}_${idHash}"
             }
             val headersMap = mutableMapOf("cookie" to cookie, "authorization" to auth)
-            val headers = headers { headersMap.forEach { (t, u) -> append(t, u) } }
             return api.client.request("https://music.youtube.com/getAccountSwitcherEndpoint") {
-                headers {
                     append("referer", "https://music.youtube.com/")
                     appendAll(headers)
                 }
@@ -1696,12 +1693,8 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             val cookie = user.extras["cookie"] ?: throw Exception("No cookie")
             val auth = user.extras["auth"] ?: throw Exception("No auth")
 
-            val headers = headers {
-                append("cookie", cookie)
-                append("authorization", auth)
-            }
             val authenticationState =
-                YoutubeiAuthenticationState(api, headers, user.id.ifEmpty { null })
+                YoutubeiAuthenticationState(api, mapOf("cookie" to cookie, "authorization" to auth), user.id.ifEmpty { null })
             api.user_auth_state = authenticationState
         }
         api.visitor_id = visitorEndpoint.getVisitorId()
@@ -1712,7 +1705,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         return api.client.request("https://music.youtube.com/getAccountSwitcherEndpoint") {
             headers {
                 append("referer", "https://music.youtube.com/")
-                appendAll(headers)
+                headers.forEach { (key, value) -> append(key, value) }
             }
         }.getUsers("", "").firstOrNull()
     }
@@ -1720,8 +1713,8 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
 
     override val markAsPlayedDuration = 30000L
 
-    override suspend fun onMarkAsPlayed(details: TrackDetails) {
-        api.user_auth_state?.MarkSongAsWatched?.markSongAsWatched(details.track.id)?.getOrThrow()
+    override suspend fun onMarkAsPlayed(track: Track) {
+        api.user_auth_state?.MarkSongAsWatched?.markSongAsWatched(track.id)?.getOrThrow()
     }
 
     override suspend fun getLibraryTabs() = listOf(
@@ -1754,7 +1747,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         val browseId = tab?.id ?: "FEmusic_library_landing"
         val (result, ctoken) = withUserAuth { libraryEndPoint.loadLibraryFeed(browseId, cont) }
         val data = result.mapNotNull { playlist ->
-            playlist.toEchoMediaItem(false, thumbnailQuality)?.toShelf()
+            playlist.toEchoMediaItem(false, if (settings.getBoolean("high_quality") == true) HIGH else LOW)?.toShelf()
         }
         Page(data, ctoken)
     }.toFeed()
@@ -1780,7 +1773,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun listEditablePlaylists(track: Track?): List<Pair<Playlist, Boolean>> =
         withUserAuth { auth ->
             auth.AccountPlaylists.getAccountPlaylists().getOrThrow().mapNotNull {
-                if (it.id != "VLSE") it.toPlaylist(thumbnailQuality) to false
+                if (it.id != "VLSE") it.toPlaylist(if (settings.getBoolean("high_quality") == true) HIGH else LOW) to false
                 else null
             }
         }
@@ -1855,11 +1848,12 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun loadLyrics(lyrics: Lyrics) = lyrics
 
     override suspend fun onShare(item: EchoMediaItem) = when (item) {
-        is EchoMediaItem.Lists.AlbumItem -> "https://music.youtube.com/browse/${item.id}"
-        is EchoMediaItem.Lists.PlaylistItem -> "https://music.youtube.com/playlist?list=${item.id}"
-        is EchoMediaItem.Lists.RadioItem -> "https://music.youtube.com/playlist?list=${item.id}"
-        is EchoMediaItem.Profile.ArtistItem -> "https://music.youtube.com/channel/${item.id}"
-        is EchoMediaItem.Profile.UserItem -> "https://music.youtube.com/channel/${item.id}"
-        is EchoMediaItem.TrackItem -> "https://music.youtube.com/watch?v=${item.id}"
+        is Album -> "https://music.youtube.com/browse/${item.id}"
+        is Playlist -> "https://music.youtube.com/playlist?list=${item.id}"
+        is Radio -> "https://music.youtube.com/playlist?list=${item.id}"
+        is Artist -> "https://music.youtube.com/channel/${item.id}"
+        is User -> "https://music.youtube.com/channel/${item.id}"
+        is Track -> "https://music.youtube.com/watch?v=${item.id}"
+        else -> throw Exception("Unsupported media type for sharing")
     }
 }

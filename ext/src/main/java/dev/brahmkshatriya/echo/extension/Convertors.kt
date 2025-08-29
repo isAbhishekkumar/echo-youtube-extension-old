@@ -4,6 +4,7 @@ import dev.brahmkshatriya.echo.common.helpers.PagedData
 import dev.brahmkshatriya.echo.common.models.Album
 import dev.brahmkshatriya.echo.common.models.Artist
 import dev.brahmkshatriya.echo.common.models.EchoMediaItem
+import dev.brahmkshatriya.echo.common.models.Feed
 import dev.brahmkshatriya.echo.common.models.ImageHolder
 import dev.brahmkshatriya.echo.common.models.ImageHolder.Companion.toImageHolder
 import dev.brahmkshatriya.echo.common.models.Playlist
@@ -47,7 +48,7 @@ suspend fun MediaItemLayout.toShelf(
                 rows.mapNotNull { itemLayout ->
                     itemLayout.toEchoMediaItem(single, quality)
                 }
-            }
+            }.toFeed()  // Convert PagedData to Feed for new API
         }
     )
 }
@@ -84,8 +85,8 @@ fun YtmPlaylist.toPlaylist(
         isEditable = bool.getOrNull(1) ?: false,
         cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(mapOf()),
         authors = artists?.map { it.toUser(quality) } ?: emptyList(),
-        trackCount = item_count,
-        duration = total_duration,
+        trackCount = item_count?.toLong(),  // Fixed: Convert to Long
+        duration = total_duration?.toLong(),  // Fixed: Convert to Long
         creationDate = null, // TODO: Fix date handling
         description = description,
         extras = extras,
@@ -105,10 +106,10 @@ fun YtmPlaylist.toAlbum(
         isExplicit = bool.firstOrNull() ?: false,
         cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(mapOf()),
         artists = artists?.map { it.toArtist(quality) } ?: emptyList(),
-        trackCount = item_count ?: if (single) 1 else null,
-        releaseDate = null, // TODO: Fix date handling
+        trackCount = item_count?.toLong() ?: if (single) 1L else null,  // Fixed: Convert to Long
+        releaseDate = null, // TODO: Fix date handling - should be Long?
         label = null,
-        duration = total_duration,
+        duration = total_duration?.toLong(),  // Fixed: Convert to Long
         description = description,
     )
 }
@@ -127,7 +128,7 @@ fun YtmSong.toTrack(
             ?: getCover(id, quality),
         artists = artists?.map { it.toArtist(quality) } ?: emptyList(),
         album = album,
-        duration = duration,
+        duration = duration?.toLong(),  // Fixed: Convert to Long
         isExplicit = is_explicit,
         isPlayable = Playable.Yes,
         isLikeable = true,
