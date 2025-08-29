@@ -124,7 +124,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             "Opus Audio Preferred",
             "prefer_opus",
             "Prefer Opus audio format over AAC for better efficiency",
-            true
+            false
         ),
         SettingSwitch(
             "Adaptive Audio Quality",
