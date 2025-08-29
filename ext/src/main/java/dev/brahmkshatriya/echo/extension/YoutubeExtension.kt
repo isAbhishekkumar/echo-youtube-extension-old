@@ -1495,10 +1495,75 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     } ?: listOf()
 
 
+    // Improved search caching
+    private var searchCache: MutableMap<String, Pair<Long, List<Shelf>>> = mutableMapOf()
     private var oldSearch: Pair<String, List<Shelf>>? = null
+    private const val CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes cache
     
+    override suspend fun quickSearch(query: String): List<QuickSearchItem> {
+        return query.takeIf { it.isNotBlank() }?.run {
+            try {
+                println("DEBUG: Quick search for: $this")
+                val suggestions = api.SearchSuggestions.getSearchSuggestions(this).getOrThrow()
+                
+                val items = mutableListOf<QuickSearchItem>()
+                
+                // Add query suggestions
+                suggestions.map { suggestion ->
+                    QuickSearchItem.Query(
+                        query = suggestion.text,
+                        searched = suggestion.is_from_history,
+                        extras = mapOf("suggestionType" to "query")
+                    )
+                }.forEach { items.add(it) }
+                
+                // Try to get some media suggestions (first few results)
+                try {
+                    val searchResults = api.Search.search(this, null).getOrThrow()
+                    searchResults.categories.take(2).flatMap { category ->
+                        category.first.items?.take(3) ?: emptyList()
+                    }.mapNotNull { mediaItem ->
+                        mediaItem.toEchoMediaItem(false, thumbnailQuality)?.let { echoItem ->
+                            QuickSearchItem.Media(
+                                media = echoItem,
+                                searched = false
+                            )
+                        }
+                    }.forEach { items.add(it) }
+                } catch (e: Exception) {
+                    println("DEBUG: Failed to get media suggestions: ${e.message}")
+                }
+                
+                items
+            } catch (e: NullPointerException) {
+                println("DEBUG: Quick search NPE: ${e.message}")
+                emptyList()
+            } catch (e: ConnectTimeoutException) {
+                println("DEBUG: Quick search timeout: ${e.message}")
+                emptyList()
+            } catch (e: Exception) {
+                println("DEBUG: Quick search error: ${e.message}")
+                emptyList()
+            }
+        } ?: emptyList()
+    }
+
+    override suspend fun deleteQuickSearch(item: QuickSearchItem) {
+        try {
+            when (item) {
+                is QuickSearchItem.Query -> {
+                    searchSuggestionsEndpoint.delete(item)
+                    println("DEBUG: Deleted quick search query: ${item.query}")
+                }
+                is QuickSearchItem.Media -> {
+                    println("DEBUG: Media items cannot be deleted from quick search")
+                }
+            }
+        } catch (e: Exception) {
+            println("DEBUG: Failed to delete quick search item: ${e.message}")
+        }
+    }
     override suspend fun loadSearchFeed(query: String): Feed<Shelf> {
-        val tabs = if (query.isNotBlank()) {
             // Get search tabs for the query
             val search = api.Search.search(query, null).getOrThrow()
             oldSearch = query to search.categories.map { (itemLayout, _) ->
@@ -2080,24 +2145,134 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     }
 
     override suspend fun searchTrackLyrics(clientId: String, track: Track): Feed<Lyrics> {
-        val pagedData = PagedData.Single {
-            val lyricsId = track.extras["lyricsId"] ?: return@Single listOf()
-            val data = lyricsEndPoint.getLyrics(lyricsId) ?: return@Single listOf()
-            val lyrics = data.first.map {
-                it.cueRange.run {
-                    Lyrics.Item(
-                        it.lyricLine,
-                        startTimeMilliseconds.toLong(),
-                        endTimeMilliseconds.toLong()
-                    )
+        return try {
+            println("DEBUG: Searching track lyrics for: ${track.title} (${track.id})")
+            
+            val pagedData = PagedData.Single {
+                try {
+                    // Try multiple ways to get lyrics ID
+                    val lyricsId = track.extras["lyricsId"] 
+                        ?: track.extras["lyrics_id"] 
+                        ?: track.id
+                    
+                    println("DEBUG: Using lyrics ID: $lyricsId")
+                    
+                    // Try to get lyrics from the endpoint
+                    val data = lyricsEndPoint.getLyrics(lyricsId)
+                    
+                    if (data != null) {
+                        val (timedLyrics, source) = data
+                        
+                        if (timedLyrics.isNotEmpty()) {
+                            val lyricsItems = timedLyrics.map { timedDatum ->
+                                Lyrics.Item(
+                                    text = timedDatum.lyricLine,
+                                    startTime = timedDatum.cueRange.startTimeMilliseconds.toLong(),
+                                    endTime = timedDatum.cueRange.endTimeMilliseconds.toLong()
+                                )
+                            }
+                            
+                            val lyrics = Lyrics(
+                                id = lyricsId,
+                                title = track.title,
+                                subtitle = source ?: "YouTube",
+                                lyrics = Lyrics.Timed(lyricsItems),
+                                extras = track.extras + mapOf("clientId" to clientId)
+                            )
+                            
+                            println("DEBUG: Successfully loaded ${lyricsItems.size} lyric lines")
+                            listOf(lyrics)
+                        } else {
+                            println("DEBUG: Empty lyrics data returned")
+                            listOf(createEmptyLyrics(track, lyricsId, "No lyrics available"))
+                        }
+                    } else {
+                        println("DEBUG: No lyrics data found for track")
+                        listOf(createEmptyLyrics(track, lyricsId, "Lyrics not available"))
+                    }
+                } catch (e: Exception) {
+                    println("DEBUG: Failed to load track lyrics: ${e.message}")
+                    listOf(createErrorLyrics(track, e.message))
                 }
             }
-            listOf(Lyrics(lyricsId, track.title, data.second, Lyrics.Timed(lyrics)))
+            
+            pagedData.toFeed()
+            
+        } catch (e: Exception) {
+            println("DEBUG: Track lyrics search failed: ${e.message}")
+            val errorLyrics = createErrorLyrics(track, e.message)
+            PagedData.Single { listOf(errorLyrics) }.toFeed()
         }
-        return pagedData.toFeed()
     }
 
-    override suspend fun loadLyrics(lyrics: Lyrics) = lyrics
+    override suspend fun loadLyrics(lyrics: Lyrics): Lyrics {
+        return try {
+            println("DEBUG: Loading lyrics for: ${lyrics.title} (${lyrics.id})")
+            
+            // If lyrics are already loaded, return them
+            if (lyrics.lyrics != null) {
+                println("DEBUG: Lyrics already loaded, returning as-is")
+                return lyrics
+            }
+            
+            // Try to fetch lyrics using the lyrics endpoint
+            val data = lyricsEndPoint.getLyrics(lyrics.id)
+            
+            if (data != null) {
+                val (timedLyrics, source) = data
+                val lyricsItems = timedLyrics.map { timedDatum ->
+                    Lyrics.Item(
+                        text = timedDatum.lyricLine,
+                        startTime = timedDatum.cueRange.startTimeMilliseconds.toLong(),
+                        endTime = timedDatum.cueRange.endTimeMilliseconds.toLong()
+                    )
+                }
+                
+                val loadedLyrics = lyrics.copy(
+                    lyrics = Lyrics.Timed(lyricsItems),
+                    subtitle = source ?: lyrics.subtitle
+                )
+                
+                println("DEBUG: Successfully loaded ${lyricsItems.size} lyric lines")
+                loadedLyrics
+            } else {
+                println("DEBUG: No lyrics data found for ID: ${lyrics.id}")
+                // Return original lyrics with a simple fallback
+                lyrics.copy(
+                    lyrics = Lyrics.Simple("Lyrics not available"),
+                    subtitle = "Unavailable"
+                )
+            }
+        } catch (e: Exception) {
+            println("DEBUG: Failed to load lyrics: ${e.message}")
+            // Return original lyrics with error information
+            lyrics.copy(
+                lyrics = Lyrics.Simple("Failed to load lyrics"),
+                subtitle = "Error: ${e.message}"
+            )
+        }
+    }
+
+    // Helper methods for lyrics
+    private fun createEmptyLyrics(track: Track, lyricsId: String, message: String): Lyrics {
+        return Lyrics(
+            id = lyricsId,
+            title = track.title,
+            subtitle = track.artists.joinToString { it.name },
+            lyrics = Lyrics.Simple(message),
+            extras = track.extras + mapOf("status" to "empty")
+        )
+    }
+
+    private fun createErrorLyrics(track: Track, errorMessage: String): Lyrics {
+        return Lyrics(
+            id = "error_${track.id}",
+            title = track.title,
+            subtitle = "Error loading lyrics",
+            lyrics = Lyrics.Simple("Failed to load: $errorMessage"),
+            extras = track.extras + mapOf("error" to errorMessage)
+        )
+    }
 
     override suspend fun onShare(item: EchoMediaItem) = when (item) {
         is Album -> "https://music.youtube.com/browse/${item.id}"
@@ -2162,6 +2337,65 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     
     // LyricsSearchClient implementation
     override suspend fun searchLyrics(query: String): Feed<Lyrics> {
-        return listOf<Lyrics>().toFeed()
+        return try {
+            println("DEBUG: Searching lyrics for query: $query")
+            
+            // First, try to search for tracks matching the query
+            val searchResults = api.Search.search(query, null).getOrThrow()
+            
+            val lyricsList = mutableListOf<Lyrics>()
+            
+            // Extract tracks from search results and try to get their lyrics
+            searchResults.categories.forEach { category ->
+                category.first.items?.forEach { mediaItem ->
+                    try {
+                        val track = mediaItem.toTrack(thumbnailQuality)
+                        if (track != null) {
+                            // Try to get lyrics ID from track extras
+                            val lyricsId = track.extras["lyricsId"] 
+                                ?: track.id // Fallback to track ID
+                            
+                            // Create a placeholder lyrics object
+                            val placeholderLyrics = Lyrics(
+                                id = lyricsId,
+                                title = track.title,
+                                subtitle = track.artists.joinToString { it.name },
+                                lyrics = null // Will be loaded later
+                            )
+                            
+                            lyricsList.add(placeholderLyrics)
+                        }
+                    } catch (e: Exception) {
+                        println("DEBUG: Failed to process track for lyrics search: ${e.message}")
+                    }
+                }
+            }
+            
+            if (lyricsList.isEmpty()) {
+                println("DEBUG: No tracks found for lyrics search: $query")
+                // Return empty feed with a message
+                val emptyLyrics = Lyrics(
+                    id = "empty_$query",
+                    title = "No lyrics found",
+                    subtitle = "No tracks found for '$query'",
+                    lyrics = Lyrics.Simple("Try a different search term")
+                )
+                lyricsList.add(emptyLyrics)
+            }
+            
+            println("DEBUG: Found ${lyricsList.size} potential lyrics results")
+            PagedData.Single { lyricsList }.toFeed()
+            
+        } catch (e: Exception) {
+            println("DEBUG: Lyrics search failed: ${e.message}")
+            // Return error lyrics
+            val errorLyrics = Lyrics(
+                id = "error_$query",
+                title = "Search Error",
+                subtitle = "Failed to search lyrics",
+                lyrics = Lyrics.Simple("Error: ${e.message}")
+            )
+            PagedData.Single { listOf(errorLyrics) }.toFeed()
+        }
     }
 }
