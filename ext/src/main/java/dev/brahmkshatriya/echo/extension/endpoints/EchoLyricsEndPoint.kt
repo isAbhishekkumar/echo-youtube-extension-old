@@ -10,33 +10,18 @@ import kotlinx.serialization.json.put
 
 class EchoLyricsEndPoint(override val api: YoutubeiApi) : ApiEndpoint() {
     suspend fun getLyrics(id: String): Pair<List<TimedLyricsDatum>, String?>? {
-        return try {
-            println("DEBUG: Fetching lyrics for ID: $id")
-            
-            val response = api.client.request {
-                endpointPath("browse")
-                addApiHeadersWithoutAuthentication()
-                postWithBody(clientContext) {
-                    put("browseId", id)
-                }
+        val response = api.client.request {
+            endpointPath("browse")
+            addApiHeadersWithoutAuthentication()
+            postWithBody(clientContext) {
+                put("browseId", id)
             }
-            
-            val data = response.body<LyricsResponse>()
-            
-            val lyricsData = data.contents?.elementRenderer?.newElement?.type
-                ?.componentType?.model?.timedLyricsModel?.lyricsData
-            
-            if (lyricsData != null) {
-                println("DEBUG: Successfully parsed lyrics data")
-                lyricsData.timedLyricsData to lyricsData.sourceMessage
-            } else {
-                println("DEBUG: No lyrics data found in response")
-                null
-            }
-        } catch (e: Exception) {
-            println("DEBUG: Failed to fetch lyrics: ${e.message}")
-            null
         }
+        val data = response.body<LyricsResponse>()
+        return data.contents?.elementRenderer?.newElement?.type
+            ?.componentType?.model?.timedLyricsModel?.lyricsData?.run {
+                timedLyricsData to sourceMessage
+            }
     }
 
 }
