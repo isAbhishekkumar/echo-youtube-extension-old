@@ -1557,7 +1557,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
 
         return Feed(tabs) { tab ->
             if (query.isNotBlank() && (tab == null || tab.id == "All")) {
-                // For search with query and "All" tab - return EchoMediaItem feed
+                // For search with query and "All" tab - return Shelf feed directly
                 val pagedData = PagedData.Single {
                     try {
                         val old = oldSearch?.takeIf { it.first == query }?.second
@@ -1573,28 +1573,38 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                         try {
                             search.categories.map { (itemLayout, _) ->
                                 try {
-                                    itemLayout.items.mapNotNull { item ->
-                                        try {
-                                            val shelf = item.toEchoMediaItem(false, thumbnailQuality)?.toShelf()
-                                            if (shelf != null) {
-                                                // Fix shelf items for search results
-                                                try {
-                                                    SearchResultsFixer.fixSearchResultShelf(shelf)
-                                                } catch (e: Exception) {
-                                                    // If fixing fails, return the original shelf to prevent crashes
-                                                    shelf
-                                                }
-                                            } else null
-                                        } catch (e: Exception) {
-                                            // Skip items that cause exceptions
-                                            null
-                                        }
+                                    // Create a shelf directly from the item layout
+                                    val shelf = try {
+                                        itemLayout.toShelf(api, SINGLES, thumbnailQuality)
+                                    } catch (e: Exception) {
+                                        // If conversion fails, create a basic shelf
+                                        Shelf.Lists.Items(
+                                            id = "error-${System.currentTimeMillis()}",
+                                            title = "Content unavailable",
+                                            subtitle = "Unable to load this content",
+                                            list = emptyList(),
+                                            more = null
+                                        )
+                                    }
+                                    
+                                    // Fix shelf items for search results
+                                    try {
+                                        SearchResultsFixer.fixSearchResultShelf(shelf)
+                                    } catch (e: Exception) {
+                                        // If fixing fails, return the original shelf
+                                        shelf
                                     }
                                 } catch (e: Exception) {
-                                    // If processing a category fails, return an empty list for this category
-                                    emptyList()
+                                    // If processing a category fails, create an error shelf
+                                    Shelf.Lists.Items(
+                                        id = "category-error-${System.currentTimeMillis()}",
+                                        title = "Category unavailable",
+                                        subtitle = "Unable to load this category",
+                                        list = emptyList(),
+                                        more = null
+                                    )
                                 }
-                            }.flatten()
+                            }
                         } catch (e: Exception) {
                             // If the entire process fails, return an empty list
                             emptyList()
@@ -1605,10 +1615,8 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                     }
                 }
                 
-                // Convert EchoMediaItem to Shelf for the feed - create a proper shelf feed
-                Feed.Data(PagedData.Single { 
-                    pagedData.loadAll().map { item -> Shelf.Item(item) } 
-                })
+                // Return the shelf feed directly
+                Feed.Data(pagedData)
             } else {
                 // For tab-based search - return Shelf feed directly
                 val pagedData = PagedData.Continuous {
