@@ -2,17 +2,19 @@ package dev.brahmkshatriya.echo.extension
 
 import dev.brahmkshatriya.echo.common.helpers.PagedData
 import dev.brahmkshatriya.echo.common.models.Album
+import dev.brahmkshatriya.echo.common.models.Artist
 import dev.brahmkshatriya.echo.common.models.Date
 import dev.brahmkshatriya.echo.common.models.EchoMediaItem
 import dev.brahmkshatriya.echo.common.models.Feed
 import dev.brahmkshatriya.echo.common.models.Feed.Companion.toFeed
-import dev.brahmkshatriya.echo.common.models.Feed.Companion.loadAll
 import dev.brahmkshatriya.echo.common.models.ImageHolder
 import dev.brahmkshatriya.echo.common.models.ImageHolder.Companion.toImageHolder
 import dev.brahmkshatriya.echo.common.models.NetworkRequest
 import dev.brahmkshatriya.echo.common.models.Playlist
 import dev.brahmkshatriya.echo.common.models.Shelf
 import dev.brahmkshatriya.echo.common.models.Track
+import dev.brahmkshatriya.echo.common.models.Track.Type
+import dev.brahmkshatriya.echo.common.models.Track.Playable
 import dev.brahmkshatriya.echo.common.models.User
 import dev.brahmkshatriya.echo.extension.YoutubeExtension.Companion.ENGLISH
 import dev.brahmkshatriya.echo.extension.YoutubeExtension.Companion.SINGLES
@@ -143,18 +145,41 @@ fun YtmSong.toTrack(
     val album = album?.toAlbum(false, quality)
     val extras = mutableMapOf<String, String>()
     setId?.let { extras["setId"] = it }
+    
+    // Determine track type based on video status
+    val trackType = when {
+        is_video -> Track.Type.VideoSong
+        else -> Track.Type.Song
+    }
+    
+    // Determine playable status (default to Yes for now, could be made conditional)
+    val playableStatus = Track.Playable.Yes
+    
     return Track(
         id = id,
         title = name ?: "Unknown",
+        type = trackType,
         artists = artists?.map { it.toArtist(quality) } ?: emptyList(),
         cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(crop = true)
             ?: getCover(id, quality),
         album = album,
         duration = duration?.toLong(),
-        plays = null,
+        plays = view_count?.toLongOrNull(),
         releaseDate = album?.releaseDate,
         isExplicit = is_explicit,
-        extras = extras,
+        isPlayable = playableStatus,
+        isRadioSupported = true,
+        isFollowable = false,
+        isSaveable = true,
+        isLikeable = true,
+        isHideable = true,
+        isShareable = true,
+        extras = extras.apply {
+            put("videoId", id)
+            put("isVideo", is_video.toString())
+            put("availability", "public")
+            put("trackType", trackType.name)
+        }
     )
 }
 
@@ -190,18 +215,31 @@ fun YtmArtist.toArtist(
 fun YtmArtist.toUser(
     quality: ThumbnailProvider.Quality,
 ): User {
-    // Create a User object from a YtmArtist
+    // Create a User object from a YtmArtist with enhanced metadata
+    val subscriberCountText = subscriber_count?.let { count ->
+        when {
+            count >= 1000000 -> "${(count / 1000000).toInt()}M subscribers"
+            count >= 1000 -> "${(count / 1000).toInt()}K subscribers"
+            else -> "$count subscribers"
+        }
+    } ?: "Artist"
+    
     return User(
         id = id,
         name = name ?: "Unknown",
         cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(mapOf()),
-        // Pass important fields as extras to ensure they're preserved during conversion
+        subtitle = subscriberCountText,
         extras = mutableMapOf<String, String>().apply {
             subscribe_channel_id?.let { put("subId", it) }
             subscriber_count?.let { put("subscriberCount", it.toString()) }
             subscribed?.let { put("isSubscribed", it.toString()) }
             // Add a flag to identify this as originally an Artist
             put("isArtist", "true")
+            put("userType", "artist")
+            put("profileUrl", "https://music.youtube.com/channel/$id")
+            // Add channel information
+            put("channelId", id)
+            put("displayName", name ?: "Unknown")
         }
     )
 }
