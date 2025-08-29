@@ -48,7 +48,7 @@ suspend fun MediaItemLayout.toShelf(
                 rows.mapNotNull { itemLayout ->
                     itemLayout.toEchoMediaItem(single, quality)
                 }
-            }.toFeed()  // Convert PagedData to Feed for new API
+            }
         }
     )
 }
@@ -84,7 +84,7 @@ fun YtmPlaylist.toPlaylist(
         title = name ?: "Unknown",
         isEditable = bool.getOrNull(1) ?: false,
         cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(mapOf()),
-        authors = artists?.map { it.toUser(quality) } ?: emptyList(),
+        authors = artists?.map { it.toArtist(quality) } ?: emptyList(),
         trackCount = item_count?.toLong(),  // Fixed: Convert to Long
         duration = total_duration?.toLong(),  // Fixed: Convert to Long
         creationDate = null, // TODO: Fix date handling
