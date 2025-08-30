@@ -388,7 +388,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         println("DEBUG: Selected audio source with bitrate: ${bestSource?.quality}")
         return bestSource
     }
-    private fun processAudioFormat(format: Any, networkType: String): Streamable.Source.Http? {
+    private fun processAudioFormat(format: Any, networkType: String, poToken: String? = null): Streamable.Source.Http? {
         try {
             val itag = parseAudioFormatItag(format)
             println("DEBUG: Processing audio format with itag: $itag")
@@ -427,19 +427,23 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             }
             println("DEBUG: Audio format $itag ($audioBitrate bps) meets quality requirements: $targetQuality")
             return try {
-                val url = when (format) {
+                val originalUrl = when (format) {
                     is Map<*, *> -> format["url"] as? String
                     else -> format.javaClass.getDeclaredField("url")?.let { field ->
                         field.isAccessible = true
                         field.get(format) as? String
                     }
                 }
-                if (url != null) {
+                
+                // Apply PoToken to the URL if available
+                val url = applyPoTokenToUrl(originalUrl ?: "", poToken)
+                
+                if (url.isNotEmpty()) {
                     Streamable.Source.Http(
                         request = url.toGetRequest(),
                         quality = audioBitrate
                     ).also {
-                        println("DEBUG: Created audio source for itag $itag with bitrate $audioBitrate")
+                        println("DEBUG: Created audio source for itag $itag with bitrate $audioBitrate, PoToken applied: ${poToken != null}")
                     }
                 } else {
                     println("DEBUG: Could not extract URL for format $itag")
@@ -852,6 +856,24 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     }
     
     /**
+     * Apply PoToken to a streaming URL if available
+     */
+    private fun applyPoTokenToUrl(originalUrl: String, poToken: String?): String {
+        return if (poToken != null) {
+            val finalUrl = if (originalUrl.contains("?")) {
+                "$originalUrl&pot=$poToken"
+            } else {
+                "$originalUrl?pot=$poToken"
+            }
+            println("DEBUG: Applied PoToken to URL - Original: ${originalUrl.take(80)}..., With PoToken: ${finalUrl.take(80)}...")
+            finalUrl
+        } else {
+            println("DEBUG: No PoToken available, using original URL: ${originalUrl.take(80)}...")
+            originalUrl
+        }
+    }
+
+    /**
      * Generate PoToken for the given video ID if enabled
      */
     private suspend fun generatePoTokenForVideo(videoId: String): String? {
@@ -969,6 +991,9 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                 null
                             }
                             
+                            // Debug PoToken status for audio streaming
+                            println("DEBUG: Audio streaming - PoToken ${if (poToken != null) "generated" else "not generated"} for videoId: $videoId")
+                            
                             val (video, _) = try {
                                 // Attempt to get video with PoToken if available
                                 if (poToken != null) {
@@ -1009,7 +1034,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                 when {
                                     isAudioFormat -> {
                                         println("DEBUG: Processing audio format: $mimeType")
-                                        val enhancedAudioSource = processAudioFormat(format, networkType)
+                                        val enhancedAudioSource = processAudioFormat(format, networkType, poToken)
                                         if (enhancedAudioSource != null) {
                                             audioSources.add(enhancedAudioSource)
                                             println("DEBUG: Added enhanced audio source (quality: ${enhancedAudioSource.quality}, mimeType: $mimeType)")
@@ -1041,7 +1066,9 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                                     }
                                                 }
                                             } 
-                                            val freshUrl = generateEnhancedUrl(originalUrl, attempt, strategy, networkType)
+                                            // Apply PoToken to the original URL before enhancement
+                                            val urlWithPoToken = applyPoTokenToUrl(originalUrl, poToken)
+                                            val freshUrl = generateEnhancedUrl(urlWithPoToken, attempt, strategy, networkType)
                                             val headers = generateMobileHeaders(strategy, networkType)
                                             
                                             val audioSource = when (strategy) {
@@ -1064,7 +1091,10 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                     }                                    
                                     isVideoFormat && showVideos -> {
                                         val qualityValue = format.bitrate?.toInt() ?: 0
-                                        val freshUrl = generateEnhancedUrl(originalUrl, attempt, strategy, networkType)
+                                        
+                                        // Apply PoToken to the original URL before enhancement
+                                        val urlWithPoToken = applyPoTokenToUrl(originalUrl, poToken)
+                                        val freshUrl = generateEnhancedUrl(urlWithPoToken, attempt, strategy, networkType)
                                         val headers = generateMobileHeaders(strategy, networkType)
                                         
                                         val videoSource = when (strategy) {
@@ -1219,6 +1249,9 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                 null
                             }
                             
+                            // Debug PoToken status for video streaming
+                            println("DEBUG: Video streaming - PoToken ${if (poToken != null) "generated" else "not generated"} for videoId: $videoId")
+                            
                             val (video, _) = try {
                                 // Attempt to get video with PoToken if available
                                 if (poToken != null) {
@@ -1273,7 +1306,10 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                 when {
                                     isAudioFormat -> {
                                         val qualityValue = format.bitrate?.toInt() ?: 192000
-                                        val freshUrl = generateEnhancedUrl(originalUrl, attempt, strategy, networkType)
+                                        
+                                        // Apply PoToken to the original URL before enhancement
+                                        val urlWithPoToken = applyPoTokenToUrl(originalUrl, poToken)
+                                        val freshUrl = generateEnhancedUrl(urlWithPoToken, attempt, strategy, networkType)
                                         val headers = generateMobileHeaders(strategy, networkType)
                                         
                                         val audioSource = when (strategy) {
@@ -1295,7 +1331,10 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                     } 
                                     isVideoFormat -> {
                                         val qualityValue = format.bitrate?.toInt() ?: 0
-                                        val freshUrl = generateEnhancedUrl(originalUrl, attempt, strategy, networkType)
+                                        
+                                        // Apply PoToken to the original URL before enhancement
+                                        val urlWithPoToken = applyPoTokenToUrl(originalUrl, poToken)
+                                        val freshUrl = generateEnhancedUrl(urlWithPoToken, attempt, strategy, networkType)
                                         val headers = generateMobileHeaders(strategy, networkType)
                                         
                                         val videoSource = when (strategy) {
@@ -1597,7 +1636,9 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
 
         val audioFiles = video.streamingData.adaptiveFormats.mapNotNull {
             if (!it.mimeType.contains("audio")) return@mapNotNull null
-            it.audioSampleRate.toString() to it.url!!
+            // Apply PoToken to the URL if available
+            val urlWithPoToken = applyPoTokenToUrl(it.url!!, poToken)
+            it.audioSampleRate.toString() to urlWithPoToken
         }.toMap()
         println("DEBUG: Audio formats found: ${audioFiles.keys}")
         
