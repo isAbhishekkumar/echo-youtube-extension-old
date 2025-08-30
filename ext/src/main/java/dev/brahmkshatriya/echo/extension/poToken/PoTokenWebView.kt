@@ -4,6 +4,7 @@ import dev.brahmkshatriya.echo.common.helpers.WebViewRequest
 import dev.brahmkshatriya.echo.common.models.NetworkRequest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.time.Instant
@@ -313,12 +314,14 @@ class PoTokenWebView(
         return try {
             // Parse the botguard response to extract webPoSignalOutput
             val responseJson = Json.parseToJsonElement(botguardResponse).jsonObject
-            val webPoSignalOutputArray = responseJson["webPoSignalOutput"]?.jsonArray
+            val webPoSignalOutputElement = responseJson["webPoSignalOutput"]
                 ?: return Result.failure(PoTokenException.GenerationException("Invalid BotGuard response format - missing webPoSignalOutput"))
+            
+            val webPoSignalOutputArray = webPoSignalOutputElement.jsonArray
 
             // Convert webPoSignalOutput array to JavaScript array format
-            val webPoSignalOutputJs = webPoSignalOutputArray.joinToString(",", prefix = "[", postfix = "]") {
-                it.jsonPrimitive.content
+            val webPoSignalOutputJs = webPoSignalOutputArray.joinToString(",", prefix = "[", postfix = "]") { element ->
+                element.jsonPrimitive.content
             }
             
             val request = object : WebViewRequest.Evaluate<String> {

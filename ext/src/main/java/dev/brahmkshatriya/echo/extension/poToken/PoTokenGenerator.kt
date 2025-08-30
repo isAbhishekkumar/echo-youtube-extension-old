@@ -68,7 +68,7 @@ class PoTokenGenerator(
     ): PoToken {
         println("DEBUG: Web PoToken requested: videoId=$videoId, sessionId=$sessionId")
 
-        val (poTokenGenerator: PoTokenWebView, streamingPot: String, hasBeenRecreated: Boolean) =
+        val tripleResult: Triple<PoTokenWebView, String, Boolean> =
             webPoTokenGenLock.withLock {
                 val shouldRecreate =
                     forceRecreate || webPoTokenGenerator == null || webPoTokenGenerator!!.isExpired || webPoTokenSessionId != sessionId
@@ -104,6 +104,10 @@ class PoTokenGenerator(
 
                 Triple(webPoTokenGenerator!!, webPoTokenStreamingPot!!, shouldRecreated)
             }
+
+        val poTokenGenerator: PoTokenWebView = tripleResult.first
+        val streamingPot: String = tripleResult.second
+        val hasBeenRecreated: Boolean = tripleResult.third
 
         val playerPot =
             try {

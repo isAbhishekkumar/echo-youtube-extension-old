@@ -898,7 +898,13 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                 
                 // Clean up old cache entries
                 val now = System.currentTimeMillis()
-                poTokenCache.entries.removeAll { it.value.second + PO_TOKEN_CACHE_DURATION < now }
+                val iterator = poTokenCache.entries.iterator()
+                while (iterator.hasNext()) {
+                    val entry = iterator.next()
+                    if (entry.value.second + PO_TOKEN_CACHE_DURATION < now) {
+                        iterator.remove()
+                    }
+                }
                 
                 playerToken
             } else {
