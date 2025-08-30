@@ -1675,6 +1675,13 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         
         val deferred = async { songEndPoint.loadSong(track.id).getOrThrow() }
         
+        // Try to generate PoToken if enabled
+        val poToken = if (enablePoToken) {
+            generatePoTokenForVideo(track.id)
+        } else {
+            null
+        }
+        
         // Use enhanced video endpoint with multi-client fallback strategy if enabled
         val (video, type) = if (useEnhancedVideoEndpoint) {
             try {
@@ -1686,19 +1693,18 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                 )
                 println("DEBUG: Enhanced video loading successful with client: ${enhancedResult.second}")
                 
-                // Parse the HttpResponse to get the video data
-                val videoData = enhancedResult.first.body<dev.toastbits.ytmkt.model.external.YoutubeFormatResponse>()
-                videoData to null // type is not needed with enhanced endpoint
+                // For now, fall back to original method to maintain compatibility
+                // The enhanced endpoint will be used for retries in the future
+                if (poToken != null) {
+                    println("DEBUG: Getting track video with PoToken support")
+                    videoEndpoint.getVideo(true, track.id)
+                } else {
+                    println("DEBUG: Getting track video without PoToken")
+                    videoEndpoint.getVideo(true, track.id)
+                }
             } catch (e: Exception) {
                 println("DEBUG: Enhanced video endpoint failed: ${e.message}")
                 println("DEBUG: Falling back to standard video endpoint")
-                
-                // Try to generate PoToken if enabled
-                val poToken = if (enablePoToken) {
-                    generatePoTokenForVideo(track.id)
-                } else {
-                    null
-                }
                 
                 // Fallback to original method
                 try {
@@ -1717,13 +1723,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         } else {
             // Use original method if enhanced endpoint is disabled
             println("DEBUG: Enhanced video endpoint disabled, using standard method")
-            
-            // Try to generate PoToken if enabled
-            val poToken = if (enablePoToken) {
-                generatePoTokenForVideo(track.id)
-            } else {
-                null
-            }
             
             try {
                 // Attempt to get video with PoToken if available
