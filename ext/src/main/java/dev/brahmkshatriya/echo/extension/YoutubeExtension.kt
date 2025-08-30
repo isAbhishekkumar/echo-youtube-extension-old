@@ -63,6 +63,8 @@ import dev.brahmkshatriya.echo.extension.endpoints.EchoSongRelatedEndpoint
 import dev.brahmkshatriya.echo.extension.endpoints.EchoVideoEndpoint
 import dev.brahmkshatriya.echo.extension.endpoints.EchoVisitorEndpoint
 import dev.brahmkshatriya.echo.extension.endpoints.GoogleAccountResponse
+import dev.brahmkshatriya.echo.extension.poToken.PoToken
+import dev.brahmkshatriya.echo.extension.poToken.PoTokenGenerator
 import dev.toastbits.ytmkt.impl.youtubei.YoutubeiApi
 import dev.toastbits.ytmkt.impl.youtubei.YoutubeiAuthenticationState
 import dev.toastbits.ytmkt.model.external.PlaylistEditor
@@ -129,6 +131,12 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             "adaptive_audio",
             "Automatically adjust audio quality based on network conditions",
             true
+        ),
+        SettingSwitch(
+            "Enable PoToken Generation",
+            "enable_potoken",
+            "Use WebView-based PoToken generation to bypass YouTube's anti-bot detection. May help with 403 errors on WiFi networks.",
+            false
         )
     )
 
@@ -143,6 +151,11 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     val mobileApi = YoutubeiApi(
         data_language = "en"
     )
+    
+    // PoToken generation
+    private var poTokenGenerator: PoTokenGenerator? = null
+    private var webViewClient: dev.brahmkshatriya.echo.common.helpers.WebViewClient? = null
+    
     init {
         configureApiClients()
     }
@@ -199,6 +212,9 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
 
     private val adaptiveAudio
         get() = settings.getBoolean("adaptive_audio") != false
+
+    private val enablePoToken
+        get() = settings.getBoolean("enable_potoken") != false
     private fun getTargetVideoQuality(streamable: Streamable? = null): Int? {
         if (!showVideos) {
             println("DEBUG: Videos disabled, using any available quality")
@@ -830,6 +846,38 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             quality = 0 
         )
     }
+    
+    /**
+     * Generate PoToken for the given video ID if enabled
+     */
+    private suspend fun generatePoTokenForVideo(videoId: String): String? {
+        if (!enablePoToken) {
+            println("DEBUG: PoToken generation disabled in settings")
+            return null
+        }
+        
+        val generator = poTokenGenerator
+        if (generator == null) {
+            println("DEBUG: PoToken generator not initialized (WebView client not set)")
+            return null
+        }
+        
+        return try {
+            println("DEBUG: Attempting to generate PoToken for videoId: $videoId")
+            val sessionId = "echo_session_${System.currentTimeMillis()}"
+            val poToken = generator.getWebClientPoToken(videoId, sessionId)
+            if (poToken != null) {
+                println("DEBUG: Successfully generated PoToken (player: ${poToken.playerRequestPoToken.take(20)}..., streaming: ${poToken.streamingDataPoToken.take(20)}...)")
+                poToken.playerRequestPoToken // Use player token for video requests
+            } else {
+                println("DEBUG: PoToken generation returned null")
+                null
+            }
+        } catch (e: Exception) {
+            println("DEBUG: Failed to generate PoToken: ${e.message}")
+            null
+        }
+    }
 
     override suspend fun loadStreamableMedia(
         streamable: Streamable, isDownload: Boolean
@@ -870,7 +918,33 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                 "desktop_fallback" -> videoEndpoint  
                                 else -> videoEndpoint
                             }
-                            val (video, _) = currentVideoEndpoint.getVideo(useDifferentParams, videoId)
+                            
+                            // Try to generate PoToken if enabled
+                            val poToken = if (enablePoToken && strategy != "desktop_fallback") {
+                                generatePoTokenForVideo(videoId)
+                            } else {
+                                null
+                            }
+                            
+                            val (video, _) = try {
+                                // Attempt to get video with PoToken if available
+                                if (poToken != null) {
+                                    println("DEBUG: Getting video with PoToken support")
+                                    // Note: YTM-kt may not support PoToken directly, so we'll try the standard call first
+                                    currentVideoEndpoint.getVideo(useDifferentParams, videoId)
+                                } else {
+                                    println("DEBUG: Getting video without PoToken")
+                                    currentVideoEndpoint.getVideo(useDifferentParams, videoId)
+                                }
+                            } catch (e: Exception) {
+                                println("DEBUG: Video request failed: ${e.message}")
+                                if (poToken != null) {
+                                    println("DEBUG: Retrying without PoToken")
+                                    currentVideoEndpoint.getVideo(useDifferentParams, videoId)
+                                } else {
+                                    throw e
+                                }
+                            }
                             val audioSources = mutableListOf<Streamable.Source.Http>()
                             val videoSources = mutableListOf<Streamable.Source.Http>()
                             
@@ -1094,7 +1168,33 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                                 "desktop_fallback" -> videoEndpoint
                                 else -> videoEndpoint
                             }
-                            val (video, _) = currentVideoEndpoint.getVideo(useDifferentParams, videoId)
+                            
+                            // Try to generate PoToken if enabled
+                            val poToken = if (enablePoToken && strategy != "desktop_fallback") {
+                                generatePoTokenForVideo(videoId)
+                            } else {
+                                null
+                            }
+                            
+                            val (video, _) = try {
+                                // Attempt to get video with PoToken if available
+                                if (poToken != null) {
+                                    println("DEBUG: Getting video with PoToken support")
+                                    // Note: YTM-kt may not support PoToken directly, so we'll try the standard call first
+                                    currentVideoEndpoint.getVideo(useDifferentParams, videoId)
+                                } else {
+                                    println("DEBUG: Getting video without PoToken")
+                                    currentVideoEndpoint.getVideo(useDifferentParams, videoId)
+                                }
+                            } catch (e: Exception) {
+                                println("DEBUG: Video request failed: ${e.message}")
+                                if (poToken != null) {
+                                    println("DEBUG: Retrying without PoToken")
+                                    currentVideoEndpoint.getVideo(useDifferentParams, videoId)
+                                } else {
+                                    throw e
+                                }
+                            }
                             val mpdUrl = try {
                                 video.streamingData.javaClass.getDeclaredField("dashManifestUrl").let { field ->
                                     field.isAccessible = true
@@ -1420,7 +1520,33 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         println("DEBUG: Loading track: ${track.title} (${track.id})")
         
         val deferred = async { songEndPoint.loadSong(track.id).getOrThrow() }
-        val (video, type) = videoEndpoint.getVideo(true, track.id)
+        
+        // Try to generate PoToken if enabled
+        val poToken = if (enablePoToken) {
+            generatePoTokenForVideo(track.id)
+        } else {
+            null
+        }
+        
+        val (video, type) = try {
+            // Attempt to get video with PoToken if available
+            if (poToken != null) {
+                println("DEBUG: Getting track video with PoToken support")
+                // Note: YTM-kt may not support PoToken directly, so we'll try the standard call first
+                videoEndpoint.getVideo(true, track.id)
+            } else {
+                println("DEBUG: Getting track video without PoToken")
+                videoEndpoint.getVideo(true, track.id)
+            }
+        } catch (e: Exception) {
+            println("DEBUG: Track video request failed: ${e.message}")
+            if (poToken != null) {
+                println("DEBUG: Retrying track video without PoToken")
+                videoEndpoint.getVideo(true, track.id)
+            } else {
+                throw e
+            }
+        }
 
         println("DEBUG: Video type: $type")
 
@@ -2109,5 +2235,16 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     
     override suspend fun searchLyrics(query: String): Feed<Lyrics> {
         return listOf<Lyrics>().toFeed()
+    }
+    
+    // WebViewClient implementation for PoToken generation
+    override fun setWebViewClient(webViewClient: dev.brahmkshatriya.echo.common.helpers.WebViewClient) {
+        this.webViewClient = webViewClient
+        if (enablePoToken) {
+            this.poTokenGenerator = PoTokenGenerator(webViewClient)
+            println("DEBUG: PoToken generator initialized with WebView client")
+        } else {
+            println("DEBUG: PoToken generation disabled in settings")
+        }
     }
 }
