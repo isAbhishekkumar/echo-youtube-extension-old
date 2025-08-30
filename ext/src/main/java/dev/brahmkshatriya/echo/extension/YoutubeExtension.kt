@@ -61,6 +61,7 @@ import dev.brahmkshatriya.echo.extension.endpoints.EchoSongEndPoint
 import dev.brahmkshatriya.echo.extension.endpoints.EchoSongFeedEndpoint
 import dev.brahmkshatriya.echo.extension.endpoints.EchoSongRelatedEndpoint
 import dev.brahmkshatriya.echo.extension.endpoints.EchoVideoEndpoint
+import dev.brahmkshatriya.echo.extension.endpoints.EnhancedVideoEndpoint
 import dev.brahmkshatriya.echo.extension.endpoints.EchoVisitorEndpoint
 import dev.brahmkshatriya.echo.extension.endpoints.GoogleAccountResponse
 import dev.brahmkshatriya.echo.extension.poToken.PoToken
@@ -137,6 +138,12 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             "enable_potoken",
             "Use WebView-based PoToken generation to bypass YouTube's anti-bot detection. May help with 403 errors on WiFi networks.",
             false
+        ),
+        SettingSwitch(
+            "Enhanced Video Endpoint",
+            "enhanced_video_endpoint",
+            "Use advanced multi-client fallback strategy for video loading. Significantly reduces 403 errors by trying multiple YouTube clients.",
+            true
         )
     )
 
@@ -219,6 +226,95 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
 
     private val enablePoToken
         get() = settings.getBoolean("enable_potoken") != false
+    
+  private val useEnhancedVideoEndpoint
+        get() = settings.getBoolean("enhanced_video_endpoint") != false
+    
+    // Authentication state management
+    private var isLoggedIn = false
+    private var authCookie: String? = null
+    private var authHeaders: Map<String, String>? = null
+    
+    /**
+     * Check if user is logged in
+     */
+    fun isLoggedIn(): Boolean = isLoggedIn
+    
+    /**
+     * Set authentication state and cookie
+     */
+    fun setAuthCookie(cookie: String?) {
+        this.authCookie = cookie
+        this.isLoggedIn = cookie != null && cookie.contains("SAPISID")
+        if (isLoggedIn) {
+            this.authHeaders = generateAuthHeaders(cookie)
+        } else {
+            this.authHeaders = null
+        }
+        println("DEBUG: Authentication state updated - Logged in: $isLoggedIn")
+    }
+    
+    /**
+     * Get authentication headers for requests
+     */
+    fun getAuthHeaders(): Map<String, String>? = authHeaders
+    
+    /**
+     * Generate SAPISIDHASH authentication headers
+     */
+    private fun generateAuthHeaders(cookie: String?): Map<String, String>? {
+        if (cookie == null || !cookie.contains("SAPISID")) {
+            return null
+        }
+        
+        return try {
+            val currentTime = System.currentTimeMillis() / 1000
+            val sapisid = cookie.split("SAPISID=")[1].split(";")[0]
+            val str = "$currentTime $sapisid https://music.youtube.com"
+            val sapisidHash = MessageDigest.getInstance("SHA-1").digest(str.toByteArray())
+                .joinToString(separator = "") { "%02x".format(it) }
+            
+            mapOf(
+                "cookie" to cookie,
+                "authorization" to "SAPISIDHASH ${currentTime}_${sapisidHash}"
+            )
+        } catch (e: Exception) {
+            println("DEBUG: Failed to generate auth headers: ${e.message}")
+            null
+        }
+    }
+    
+    /**
+     * Enhanced visitor data management with retry logic
+     */
+    private suspend fun ensureVisitorId() {
+        try {
+            println("DEBUG: Checking visitor ID, current: ${api.visitor_id}")
+            if (api.visitor_id == null) {
+                println("DEBUG: Getting new visitor ID")
+                var visitorError: Exception? = null
+                for (attempt in 1..3) {
+                    try {
+                        api.visitor_id = visitorEndpoint.getVisitorId()
+                        println("DEBUG: Got visitor ID on attempt $attempt: ${api.visitor_id}")
+                        return
+                    } catch (e: Exception) {
+                        visitorError = e
+                        println("DEBUG: Visitor ID attempt $attempt failed: ${e.message}")
+                        if (attempt < 3) {
+                            kotlinx.coroutines.delay(500L * attempt) 
+                        }
+                    }
+                }
+                throw visitorError ?: Exception("Failed to get visitor ID after 3 attempts")
+            } else {
+                println("DEBUG: Visitor ID already exists: ${api.visitor_id}")
+            }
+        } catch (e: Exception) {
+            println("DEBUG: Failed to initialize visitor ID: ${e.message}")
+        }
+    }
+    
     private fun getTargetVideoQuality(streamable: Streamable? = null): Int? {
         if (!showVideos) {
             println("DEBUG: Videos disabled, using any available quality")
@@ -469,6 +565,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     private val songRelatedEndpoint = EchoSongRelatedEndpoint(api)
     private val videoEndpoint = EchoVideoEndpoint(api)
     private val mobileVideoEndpoint = EchoVideoEndpoint(mobileApi)
+    private val enhancedVideoEndpoint = EnhancedVideoEndpoint(api, this)
     private val playlistEndPoint = EchoPlaylistEndpoint(api)
     private val lyricsEndPoint = EchoLyricsEndPoint(api)
     private val searchSuggestionsEndpoint = EchoSearchSuggestionsEndpoint(api)
@@ -1599,34 +1696,74 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun loadTrack(track: Track, isDownload: Boolean): Track = coroutineScope {
         ensureVisitorId()
         
-        println("DEBUG: Loading track: ${track.title} (${track.id})")
+        println("DEBUG: Loading track with enhanced fallback: ${track.title} (${track.id})")
         
         val deferred = async { songEndPoint.loadSong(track.id).getOrThrow() }
         
-        // Try to generate PoToken if enabled
-        val poToken = if (enablePoToken) {
-            generatePoTokenForVideo(track.id)
-        } else {
-            null
-        }
-        
-        val (video, type) = try {
-            // Attempt to get video with PoToken if available
-            if (poToken != null) {
-                println("DEBUG: Getting track video with PoToken support")
-                // Note: YTM-kt may not support PoToken directly, so we'll try the standard call first
-                videoEndpoint.getVideo(true, track.id)
-            } else {
-                println("DEBUG: Getting track video without PoToken")
-                videoEndpoint.getVideo(true, track.id)
+        // Use enhanced video endpoint with multi-client fallback strategy if enabled
+        val (video, type) = if (useEnhancedVideoEndpoint) {
+            try {
+                println("DEBUG: Using enhanced video endpoint with fallback strategy")
+                val enhancedResult = enhancedVideoEndpoint.getVideoWithFallback(
+                    resolve = true,
+                    videoId = track.id,
+                    enablePoToken = enablePoToken
+                )
+                println("DEBUG: Enhanced video loading successful with client: ${enhancedResult.second}")
+                enhancedResult.first to null // type is not needed with enhanced endpoint
+            } catch (e: Exception) {
+                println("DEBUG: Enhanced video endpoint failed: ${e.message}")
+                println("DEBUG: Falling back to standard video endpoint")
+                
+                // Try to generate PoToken if enabled
+                val poToken = if (enablePoToken) {
+                    generatePoTokenForVideo(track.id)
+                } else {
+                    null
+                }
+                
+                // Fallback to original method
+                try {
+                    if (poToken != null) {
+                        println("DEBUG: Getting track video with PoToken support (fallback)")
+                        videoEndpoint.getVideo(true, track.id)
+                    } else {
+                        println("DEBUG: Getting track video without PoToken (fallback)")
+                        videoEndpoint.getVideo(true, track.id)
+                    }
+                } catch (fallbackException: Exception) {
+                    println("DEBUG: All video loading methods failed: ${fallbackException.message}")
+                    throw fallbackException
+                }
             }
-        } catch (e: Exception) {
-            println("DEBUG: Track video request failed: ${e.message}")
-            if (poToken != null) {
-                println("DEBUG: Retrying track video without PoToken")
-                videoEndpoint.getVideo(true, track.id)
+        } else {
+            // Use original method if enhanced endpoint is disabled
+            println("DEBUG: Enhanced video endpoint disabled, using standard method")
+            
+            // Try to generate PoToken if enabled
+            val poToken = if (enablePoToken) {
+                generatePoTokenForVideo(track.id)
             } else {
-                throw e
+                null
+            }
+            
+            try {
+                // Attempt to get video with PoToken if available
+                if (poToken != null) {
+                    println("DEBUG: Getting track video with PoToken support")
+                    videoEndpoint.getVideo(true, track.id)
+                } else {
+                    println("DEBUG: Getting track video without PoToken")
+                    videoEndpoint.getVideo(true, track.id)
+                }
+            } catch (e: Exception) {
+                println("DEBUG: Track video request failed: ${e.message}")
+                if (poToken != null) {
+                    println("DEBUG: Retrying track video without PoToken")
+                    videoEndpoint.getVideo(true, track.id)
+                } else {
+                    throw e
+                }
             }
         }
 
@@ -2024,6 +2161,8 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override fun setLoginUser(user: User?) {
         if (user == null) {
             api.user_auth_state = null
+            // Clear authentication state
+            setAuthCookie(null)
         } else {
             val cookie = user.extras["cookie"] ?: throw Exception("No cookie")
             val auth = user.extras["auth"] ?: throw Exception("No auth")
@@ -2035,6 +2174,9 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             val authenticationState =
                 YoutubeiAuthenticationState(api, headers, user.id.ifEmpty { null })
             api.user_auth_state = authenticationState
+            
+            // Update authentication state
+            setAuthCookie(cookie)
         }
         api.visitor_id = runCatching { kotlinx.coroutines.runBlocking { visitorEndpoint.getVisitorId() } }.getOrNull()
     }
