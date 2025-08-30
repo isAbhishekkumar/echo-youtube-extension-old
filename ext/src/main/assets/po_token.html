@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>PoToken Generator</title>
+    <script>
+        /**
+         * Factory method to create and load a BotGuardClient instance.
+         * @param options - Configuration options for the BotGuardClient.
+         * @returns A promise that resolves to a loaded BotGuardClient instance.
+         */
+        function loadBotGuard(challengeData) {
+          this.vm = this[challengeData.globalName];
+          this.program = challengeData.program;
+          this.vmFunctions = {};
+          this.syncSnapshotFunction = null;
+
+          if (!this.vm)
+            throw new Error('[BotGuardClient]: VM not found in the global object');
+
+          if (!this.vm.a)
+            throw new Error('[BotGuardClient]: Could not load program');
+
+          const vmFunctionsCallback = function (
+            asyncSnapshotFunction,
+            shutdownFunction,
+            passEventFunction,
+            checkCameraFunction
+          ) {
+            this.vmFunctions = {
+              asyncSnapshotFunction: asyncSnapshotFunction,
+              shutdownFunction: shutdownFunction,
+              passEventFunction: passEventFunction,
+              checkCameraFunction: checkCameraFunction
+            };
+          };
+
+          this.syncSnapshotFunction = this.vm.a(this.program, vmFunctionsCallback, true, this.userInteractionElement, function () {/** no-op */ }, [ [], [] ])[0]
+
+          // an asynchronous function runs in the background and it will eventually call
+          // `vmFunctionsCallback`, however we need to manually tell JavaScript to pass
+          // control to the things running in the background by interrupting this async
+          // function in any way, e.g. with a delay of 1ms. The loop is most probably not
+          // needed but is there just because.
+          return new Promise(function (resolve, reject) {
+            i = 0
+            refreshIntervalId = setInterval(function () {
+              if (!!this.vmFunctions.asyncSnapshotFunction) {
+                resolve(this)
+                clearInterval(refreshIntervalId);
+              }
+              if (i >= 10000) {
+                reject("asyncSnapshotFunction is null even after 10 seconds")
+                clearInterval(refreshIntervalId);
+              }
+              i += 1;
+            }, 1);
+          })
+        }
+
+        /**
+         * Takes a snapshot asynchronously.
+         * @returns The snapshot result.
+         */
+        function snapshot(args) {
+          return new Promise(function (resolve, reject) {
+            if (!this.vmFunctions.asyncSnapshotFunction)
+              return reject(new Error('[BotGuardClient]: Async snapshot function not found'));
+
+            this.vmFunctions.asyncSnapshotFunction(function (response) { resolve(response) }, [
+              args.contentBinding,
+              args.signedTimestamp,
+              args.webPoSignalOutput,
+              args.skipPrivacyBuffer
+            ]);
+          });
+        }
+
+        function runBotGuard(challengeData) {
+          const interpreterJavascript = challengeData.interpreterJavascript.privateDoNotAccessOrElseSafeScriptWrappedValue;
+
+          if (interpreterJavascript) {
+            new Function(interpreterJavascript)();
+          } else throw new Error('Could not load VM');
+
+          const webPoSignalOutput = [];
+          return loadBotGuard({
+            globalName: challengeData.globalName,
+            globalObj: this,
+            program: challengeData.program
+          }).then(function (botguard) {
+            return botguard.snapshot({ webPoSignalOutput: webPoSignalOutput })
+          }).then(function (botguardResponse) {
+            return { webPoSignalOutput: webPoSignalOutput, botguardResponse: botguardResponse }
+          })
+        }
+
+        function obtainPoToken(webPoSignalOutput, integrityToken, identifier) {
+          const getMinter = webPoSignalOutput[0];
+
+          if (!getMinter)
+            throw new Error('PMD:Undefined');
+
+          const mintCallback = getMinter(integrityToken);
+
+          if (!(mintCallback instanceof Function))
+            throw new Error('APF:Failed');
+
+          const result = mintCallback(identifier);
+
+          if (!result)
+            throw new Error('YNJ:Undefined');
+
+          if (!(result instanceof Uint8Array))
+            throw new Error('ODM:Invalid');
+
+          return result;
+        }
+
+        // Helper functions for base64 encoding/decoding
+        function stringToU8(identifier) {
+          return new Uint8Array(Array.from(identifier, c => c.charCodeAt(0)));
+        }
+
+        function u8ToBase64(u8Array) {
+          return btoa(String.fromCharCode.apply(null, Array.from(u8Array)))
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        }
+
+        // Global state storage
+        let globalState = {
+          webPoSignalOutput: null,
+          integrityToken: null,
+          isInitialized: false
+        };
+
+        // Store state for future use
+        function storeState(webPoSignalOutput, integrityToken) {
+          globalState.webPoSignalOutput = webPoSignalOutput;
+          globalState.integrityToken = integrityToken;
+          globalState.isInitialized = true;
+          return { success: true };
+        }
+
+        // Generate PoToken using stored state
+        function generatePoTokenWithState(identifier) {
+          if (!globalState.isInitialized) {
+            throw new Error('PoToken generator not initialized');
+          }
+          
+          const u8Identifier = stringToU8(identifier);
+          const poTokenU8 = obtainPoToken(globalState.webPoSignalOutput, globalState.integrityToken, u8Identifier);
+          return u8ToBase64(poTokenU8);
+        }
+
+        // Check if initialized
+        function isInitialized() {
+          return globalState.isInitialized;
+        }
+
+        // Get current state
+        function getState() {
+          return globalState;
+        }
+    </script>
+</head>
+<body>
+    <div id="content">PoToken Generator Ready</div>
+</body>
+</html>

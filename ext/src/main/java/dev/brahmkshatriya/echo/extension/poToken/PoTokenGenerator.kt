@@ -10,6 +10,7 @@ class PoTokenGenerator(
 ) {
     private val isWebViewSupported = AtomicBoolean(true)
     private var webViewBadImpl = false
+    private var lastError: Throwable? = null
 
     private val webPoTokenGenLock = Mutex()
     private var webPoTokenSessionId: String? = null
@@ -34,15 +35,23 @@ class PoTokenGenerator(
                 is PoTokenException.BadWebViewException -> {
                     println("DEBUG: WebView implementation is broken, disabling PoToken generation: ${e.message}")
                     webViewBadImpl = true
+                    lastError = e
+                    null
+                }
+                is PoTokenException.TimeoutException -> {
+                    println("DEBUG: PoToken generation timed out: ${e.message}")
+                    lastError = e
                     null
                 }
                 else -> {
                     println("DEBUG: PoToken generation failed: ${e.message}")
+                    lastError = e
                     null
                 }
             }
         } catch (e: Exception) {
             println("DEBUG: Unexpected error during PoToken generation: ${e.message}")
+            lastError = e
             null
         }
     }
@@ -74,7 +83,8 @@ class PoTokenGenerator(
                     // Create a new webPoTokenGenerator
                     val createResult = PoTokenWebView.create(webViewClient, videoId, sessionId)
                     if (createResult.isFailure) {
-                        throw PoTokenException.GenerationException("Failed to create PoToken WebView", createResult.exceptionOrNull())
+                        val exception = createResult.exceptionOrNull() ?: PoTokenException.GenerationException("Unknown error creating PoToken WebView")
+                        throw PoTokenException.GenerationException("Failed to create PoToken WebView", exception)
                     }
                     
                     webPoTokenGenerator = createResult.getOrThrow()
@@ -84,14 +94,15 @@ class PoTokenGenerator(
                     println("DEBUG: Generating streaming PoToken")
                     val streamingResult = webPoTokenGenerator!!.generatePoToken(webPoTokenSessionId!!)
                     if (streamingResult.isFailure) {
-                        throw PoTokenException.GenerationException("Failed to generate streaming PoToken", streamingResult.exceptionOrNull())
+                        val exception = streamingResult.exceptionOrNull() ?: PoTokenException.GenerationException("Unknown error generating streaming PoToken")
+                        throw PoTokenException.GenerationException("Failed to generate streaming PoToken", exception)
                     }
                     
                     webPoTokenStreamingPot = streamingResult.getOrThrow()
                     println("DEBUG: Streaming PoToken generated successfully")
                 }
 
-                Triple(webPoTokenGenerator!!, webPoTokenStreamingPot!!, shouldRecreate)
+                Triple(webPoTokenGenerator!!, webPoTokenStreamingPot!!, shouldRecreated)
             }
 
         val playerPot =
@@ -102,7 +113,8 @@ class PoTokenGenerator(
                 println("DEBUG: Generating player PoToken for videoId: $videoId")
                 val playerResult = poTokenGenerator.generatePoToken(videoId)
                 if (playerResult.isFailure) {
-                    throw PoTokenException.GenerationException("Failed to generate player PoToken", playerResult.exceptionOrNull())
+                    val exception = playerResult.exceptionOrNull() ?: PoTokenException.GenerationException("Unknown error generating player PoToken")
+                    throw PoTokenException.GenerationException("Failed to generate player PoToken", exception)
                 }
                 
                 playerResult.getOrThrow()
@@ -133,6 +145,7 @@ class PoTokenGenerator(
                 webPoTokenSessionId = null
                 webPoTokenStreamingPot = null
                 webViewBadImpl = false
+                lastError = null
                 println("DEBUG: PoToken generator reset")
             }
         }
@@ -141,5 +154,19 @@ class PoTokenGenerator(
     fun setWebViewSupported(supported: Boolean) {
         isWebViewSupported.set(supported)
         println("DEBUG: WebView support set to: $supported")
+    }
+
+    fun getLastError(): Throwable? = lastError
+
+    fun isWebViewAvailable(): Boolean = isWebViewSupported.get() && !webViewBadImpl
+
+    fun getStatus(): String {
+        return when {
+            !isWebViewSupported.get() -> "WebView support disabled"
+            webViewBadImpl -> "WebView implementation broken"
+            webPoTokenGenerator == null -> "Not initialized"
+            webPoTokenGenerator!!.isExpired -> "Expired"
+            else -> "Ready"
+        }
     }
 }

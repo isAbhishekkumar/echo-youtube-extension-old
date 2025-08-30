@@ -8,6 +8,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.Base64
 
 class PoTokenWebView(
     private val webViewClient: dev.brahmkshatriya.echo.common.helpers.WebViewClient,
@@ -24,123 +25,7 @@ class PoTokenWebView(
         private const val USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.3"
-        private const val PO_TOKEN_HTML = """
-            <!DOCTYPE html>
-            <html lang="en"><head><title></title><script>
-                /**
-                 * Factory method to create and load a BotGuardClient instance.
-                 * @param options - Configuration options for the BotGuardClient.
-                 * @returns A promise that resolves to a loaded BotGuardClient instance.
-                 */
-                function loadBotGuard(challengeData) {
-                  this.vm = this[challengeData.globalName];
-                  this.program = challengeData.program;
-                  this.vmFunctions = {};
-                  this.syncSnapshotFunction = null;
-
-                  if (!this.vm)
-                    throw new Error('[BotGuardClient]: VM not found in the global object');
-
-                  if (!this.vm.a)
-                    throw new Error('[BotGuardClient]: Could not load program');
-
-                  const vmFunctionsCallback = function (
-                    asyncSnapshotFunction,
-                    shutdownFunction,
-                    passEventFunction,
-                    checkCameraFunction
-                  ) {
-                    this.vmFunctions = {
-                      asyncSnapshotFunction: asyncSnapshotFunction,
-                      shutdownFunction: shutdownFunction,
-                      passEventFunction: passEventFunction,
-                      checkCameraFunction: checkCameraFunction
-                    };
-                  };
-
-                  this.syncSnapshotFunction = this.vm.a(this.program, vmFunctionsCallback, true, this.userInteractionElement, function () {/** no-op */ }, [ [], [] ])[0]
-
-                  // an asynchronous function runs in the background and it will eventually call
-                  // `vmFunctionsCallback`, however we need to manually tell JavaScript to pass
-                  // control to the things running in the background by interrupting this async
-                  // function in any way, e.g. with a delay of 1ms. The loop is most probably not
-                  // needed but is there just because.
-                  return new Promise(function (resolve, reject) {
-                    i = 0
-                    refreshIntervalId = setInterval(function () {
-                      if (!!this.vmFunctions.asyncSnapshotFunction) {
-                        resolve(this)
-                        clearInterval(refreshIntervalId);
-                      }
-                      if (i >= 10000) {
-                        reject("asyncSnapshotFunction is null even after 10 seconds")
-                        clearInterval(refreshIntervalId);
-                      }
-                      i += 1;
-                    }, 1);
-                  })
-                }
-
-                /**
-                 * Takes a snapshot asynchronously.
-                 * @returns The snapshot result.
-                 */
-                function snapshot(args) {
-                  return new Promise(function (resolve, reject) {
-                    if (!this.vmFunctions.asyncSnapshotFunction)
-                      return reject(new Error('[BotGuardClient]: Async snapshot function not found'));
-
-                    this.vmFunctions.asyncSnapshotFunction(function (response) { resolve(response) }, [
-                      args.contentBinding,
-                      args.signedTimestamp,
-                      args.webPoSignalOutput,
-                      args.skipPrivacyBuffer
-                    ]);
-                  });
-                }
-
-                function runBotGuard(challengeData) {
-                  const interpreterJavascript = challengeData.interpreterJavascript.privateDoNotAccessOrElseSafeScriptWrappedValue;
-
-                  if (interpreterJavascript) {
-                    new Function(interpreterJavascript)();
-                  } else throw new Error('Could not load VM');
-
-                  const webPoSignalOutput = [];
-                  return loadBotGuard({
-                    globalName: challengeData.globalName,
-                    globalObj: this,
-                    program: challengeData.program
-                  }).then(function (botguard) {
-                    return botguard.snapshot({ webPoSignalOutput: webPoSignalOutput })
-                  }).then(function (botguardResponse) {
-                    return { webPoSignalOutput: webPoSignalOutput, botguardResponse: botguardResponse }
-                  })
-                }
-
-                function obtainPoToken(webPoSignalOutput, integrityToken, identifier) {
-                  const getMinter = webPoSignalOutput[0];
-
-                  if (!getMinter)
-                    throw new Error('PMD:Undefined');
-
-                  const mintCallback = getMinter(integrityToken);
-
-                  if (!(mintCallback instanceof Function))
-                    throw new Error('APF:Failed');
-
-                  const result = mintCallback(identifier);
-
-                  if (!result)
-                    throw new Error('YNJ:Undefined');
-
-                  if (!(result instanceof Uint8Array))
-                    throw new Error('ODM:Invalid');
-
-                  return result;
-                }
-            </script></head><body></body></html>
-        """
+        private const val PO_TOKEN_HTML_URL = "file:///android_asset/po_token.html"
 
         suspend fun create(
             webViewClient: dev.brahmkshatriya.echo.common.helpers.WebViewClient,
@@ -159,7 +44,13 @@ class PoTokenWebView(
 
     private suspend fun initialize() {
         try {
-            // Step 1: Load HTML and get BotGuard challenge
+            // Step 1: Load the HTML asset and check if it's ready
+            val loadResult = loadHtmlAsset()
+            if (loadResult.isFailure) {
+                throw PoTokenException.GenerationException("Failed to load HTML asset", loadResult.exceptionOrNull())
+            }
+
+            // Step 2: Create BotGuard challenge
             val challengeResult = createBotGuardChallenge()
             if (challengeResult.isFailure) {
                 throw PoTokenException.GenerationException("Failed to create BotGuard challenge", challengeResult.exceptionOrNull())
@@ -167,7 +58,7 @@ class PoTokenWebView(
 
             val challengeData = challengeResult.getOrThrow()
             
-            // Step 2: Run BotGuard and get response
+            // Step 3: Run BotGuard and get response
             val botguardResult = runBotGuard(challengeData)
             if (botguardResult.isFailure) {
                 throw PoTokenException.GenerationException("Failed to run BotGuard", botguardResult.exceptionOrNull())
@@ -175,13 +66,19 @@ class PoTokenWebView(
 
             val botguardResponse = botguardResult.getOrThrow()
             
-            // Step 3: Generate integrity token
+            // Step 4: Generate integrity token
             val integrityResult = generateIntegrityToken(botguardResponse)
             if (integrityResult.isFailure) {
                 throw PoTokenException.GenerationException("Failed to generate integrity token", integrityResult.exceptionOrNull())
             }
 
             val (integrityToken, expirationTimeInSeconds) = integrityResult.getOrThrow()
+            
+            // Step 5: Store state in JavaScript
+            val stateResult = storeJavaScriptState(botguardResponse, integrityToken)
+            if (stateResult.isFailure) {
+                throw PoTokenException.GenerationException("Failed to store JavaScript state", stateResult.exceptionOrNull())
+            }
             
             // Set expiration with 10 minutes margin
             expirationInstant = Instant.now().plusSeconds(expirationTimeInSeconds).minus(10, ChronoUnit.MINUTES)
@@ -193,6 +90,54 @@ class PoTokenWebView(
             lastError = e
             println("DEBUG: Failed to initialize PoToken WebView: ${e.message}")
             throw e
+        }
+    }
+
+    private suspend fun loadHtmlAsset(): Result<String> {
+        return try {
+            val request = object : WebViewRequest.Evaluate<String> {
+                override val initialUrl = NetworkRequest(
+                    url = PO_TOKEN_HTML_URL,
+                    headers = emptyMap(),
+                    method = NetworkRequest.Method.GET,
+                    bodyBase64 = null
+                )
+                override val stopUrlRegex = Regex("file:///android_asset.*")
+                override val javascriptToEvaluate = """
+                    (function() {
+                        try {
+                            if (typeof runBotGuard !== 'undefined' && typeof obtainPoToken !== 'undefined') {
+                                return 'READY';
+                            } else {
+                                return 'ERROR: Functions not loaded';
+                            }
+                        } catch (e) {
+                            return 'ERROR: ' + e.message;
+                        }
+                    })();
+                """
+                override val maxTimeout = 10000L // 10 seconds
+                
+                override suspend fun onStop(url: NetworkRequest, data: String?): String? {
+                    return null
+                }
+            }
+
+            val result = webViewClient.await(true, "Loading HTML asset", request)
+            if (result.isFailure) {
+                return Result.failure(PoTokenException.GenerationException("Failed to load HTML asset", result.exceptionOrNull()))
+            }
+
+            val response = result.getOrThrow() ?: return Result.failure(PoTokenException.GenerationException("Empty HTML response"))
+            
+            if (response != "READY") {
+                return Result.failure(PoTokenException.GenerationException("HTML asset not ready: $response"))
+            }
+            
+            Result.success(response)
+            
+        } catch (e: Exception) {
+            Result.failure(PoTokenException.GenerationException("Failed to load HTML asset", e))
         }
     }
 
@@ -257,12 +202,12 @@ class PoTokenWebView(
             
             val request = object : WebViewRequest.Evaluate<String> {
                 override val initialUrl = NetworkRequest(
-                    url = "data:text/html;charset=utf-8,${PO_TOKEN_HTML.encodeToByteArray().toString()}",
+                    url = PO_TOKEN_HTML_URL,
                     headers = emptyMap(),
                     method = NetworkRequest.Method.GET,
                     bodyBase64 = null
                 )
-                override val stopUrlRegex = Regex("data:.*")
+                override val stopUrlRegex = Regex("file:///android_asset.*")
                 override val javascriptToEvaluate = """
                     (function() {
                         try {
@@ -364,6 +309,63 @@ class PoTokenWebView(
         }
     }
 
+    private suspend fun storeJavaScriptState(botguardResponse: String, integrityToken: String): Result<String> {
+        return try {
+            // Parse the botguard response to extract webPoSignalOutput
+            val responseJson = Json.parseToJsonElement(botguardResponse).jsonObject
+            val webPoSignalOutputArray = responseJson["webPoSignalOutput"]?.jsonArray
+                ?: return Result.failure(PoTokenException.GenerationException("Invalid BotGuard response format - missing webPoSignalOutput"))
+
+            // Convert webPoSignalOutput array to JavaScript array format
+            val webPoSignalOutputJs = webPoSignalOutputArray.joinToString(",", prefix = "[", postfix = "]") {
+                it.jsonPrimitive.content
+            }
+            
+            val request = object : WebViewRequest.Evaluate<String> {
+                override val initialUrl = NetworkRequest(
+                    url = PO_TOKEN_HTML_URL,
+                    headers = emptyMap(),
+                    method = NetworkRequest.Method.GET,
+                    bodyBase64 = null
+                )
+                override val stopUrlRegex = Regex("file:///android_asset.*")
+                override val javascriptToEvaluate = """
+                    (function() {
+                        try {
+                            const webPoSignalOutput = $webPoSignalOutputJs;
+                            const integrityToken = ${Json.encodeToString(integrityToken)};
+                            const result = storeState(webPoSignalOutput, integrityToken);
+                            return JSON.stringify(result);
+                        } catch (error) {
+                            return 'ERROR: ' + error + '\n' + error.stack;
+                        }
+                    })();
+                """
+                override val maxTimeout = 10000L // 10 seconds
+                
+                override suspend fun onStop(url: NetworkRequest, data: String?): String? {
+                    return null
+                }
+            }
+
+            val result = webViewClient.await(true, "Storing JavaScript state", request)
+            if (result.isFailure) {
+                return Result.failure(PoTokenException.GenerationException("Failed to store JavaScript state", result.exceptionOrNull()))
+            }
+
+            val response = result.getOrThrow() ?: return Result.failure(PoTokenException.GenerationException("Empty state storage response"))
+            
+            if (response.startsWith("ERROR:")) {
+                return Result.failure(PoTokenException.GenerationException("State storage failed: $response"))
+            }
+            
+            Result.success(response)
+            
+        } catch (e: Exception) {
+            Result.failure(PoTokenException.GenerationException("Failed to store JavaScript state", e))
+        }
+    }
+
     suspend fun generatePoToken(identifier: String): Result<String> {
         return try {
             if (!isInitialized) {
@@ -376,20 +378,18 @@ class PoTokenWebView(
 
             val request = object : WebViewRequest.Evaluate<String> {
                 override val initialUrl = NetworkRequest(
-                    url = "data:text/html;charset=utf-8,${PO_TOKEN_HTML.encodeToByteArray().toString()}",
+                    url = PO_TOKEN_HTML_URL,
                     headers = emptyMap(),
                     method = NetworkRequest.Method.GET,
                     bodyBase64 = null
                 )
-                override val stopUrlRegex = Regex("data:.*")
+                override val stopUrlRegex = Regex("file:///android_asset.*")
                 override val javascriptToEvaluate = """
                     (function() {
                         try {
-                            identifier = "$identifier";
-                            u8Identifier = ${stringToU8(identifier)};
-                            poTokenU8 = obtainPoToken(webPoSignalOutput, integrityToken, u8Identifier);
-                            poTokenU8String = poTokenU8.join(",");
-                            return poTokenU8String;
+                            const identifier = "$identifier";
+                            const poToken = generatePoTokenWithState(identifier);
+                            return poToken;
                         } catch (error) {
                             return 'ERROR: ' + error + '\n' + error.stack;
                         }
@@ -407,13 +407,12 @@ class PoTokenWebView(
                 return Result.failure(PoTokenException.GenerationException("PoToken generation failed", result.exceptionOrNull()))
             }
 
-            val poTokenU8 = result.getOrThrow() ?: return Result.failure(PoTokenException.GenerationException("Empty PoToken response"))
+            val poToken = result.getOrThrow() ?: return Result.failure(PoTokenException.GenerationException("Empty PoToken response"))
             
-            if (poTokenU8.startsWith("ERROR:")) {
-                return Result.failure(PoTokenException.GenerationException("PoToken generation error: $poTokenU8"))
+            if (poToken.startsWith("ERROR:")) {
+                return Result.failure(PoTokenException.GenerationException("PoToken generation error: $poToken"))
             }
             
-            val poToken = u8ToBase64(poTokenU8)
             println("DEBUG: Generated PoToken for identifier $identifier: ${poToken.take(20)}...")
             Result.success(poToken)
             

@@ -155,6 +155,10 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     // PoToken generation
     private var poTokenGenerator: PoTokenGenerator? = null
     private var webViewClient: dev.brahmkshatriya.echo.common.helpers.WebViewClient? = null
+    private var currentSessionId: String? = null
+    private var lastPoTokenGeneration: Long = 0
+    private val poTokenCache = mutableMapOf<String, Pair<String, Long>>() // videoId to (poToken, timestamp)
+    private val PO_TOKEN_CACHE_DURATION = 30 * 60 * 1000L // 30 minutes in milliseconds
     
     init {
         configureApiClients()
@@ -856,25 +860,58 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             return null
         }
         
+        // Check cache first
+        val cachedToken = poTokenCache[videoId]
+        if (cachedToken != null && System.currentTimeMillis() - cachedToken.second < PO_TOKEN_CACHE_DURATION) {
+            println("DEBUG: Using cached PoToken for videoId: $videoId")
+            return cachedToken.first
+        }
+        
         val generator = poTokenGenerator
         if (generator == null) {
             println("DEBUG: PoToken generator not initialized (WebView client not set)")
             return null
         }
         
+        // Generate or reuse session ID
+        if (currentSessionId == null) {
+            currentSessionId = "echo_session_${System.currentTimeMillis()}"
+            println("DEBUG: Created new session: $currentSessionId")
+        }
+        
         return try {
             println("DEBUG: Attempting to generate PoToken for videoId: $videoId")
-            val sessionId = "echo_session_${System.currentTimeMillis()}"
-            val poToken = generator.getWebClientPoToken(videoId, sessionId)
+            
+            // Check if generator is available and working
+            if (!generator.isWebViewAvailable()) {
+                println("DEBUG: WebView not available for PoToken generation: ${generator.getStatus()}")
+                return null
+            }
+            
+            val poToken = generator.getWebClientPoToken(videoId, currentSessionId!!)
             if (poToken != null) {
                 println("DEBUG: Successfully generated PoToken (player: ${poToken.playerRequestPoToken.take(20)}..., streaming: ${poToken.streamingDataPoToken.take(20)}...)")
-                poToken.playerRequestPoToken // Use player token for video requests
+                val playerToken = poToken.playerRequestPoToken // Use player token for video requests
+                
+                // Cache the token
+                poTokenCache[videoId] = Pair(playerToken, System.currentTimeMillis())
+                
+                // Clean up old cache entries
+                val now = System.currentTimeMillis()
+                poTokenCache.entries.removeAll { it.value.second + PO_TOKEN_CACHE_DURATION < now }
+                
+                playerToken
             } else {
-                println("DEBUG: PoToken generation returned null")
+                println("DEBUG: PoToken generation returned null - Status: ${generator.getStatus()}")
+                val lastError = generator.getLastError()
+                if (lastError != null) {
+                    println("DEBUG: Last PoToken error: ${lastError.message}")
+                }
                 null
             }
         } catch (e: Exception) {
             println("DEBUG: Failed to generate PoToken: ${e.message}")
+            e.printStackTrace()
             null
         }
     }
@@ -2241,10 +2278,43 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     fun setWebViewClient(webViewClient: dev.brahmkshatriya.echo.common.helpers.WebViewClient) {
         this.webViewClient = webViewClient
         if (enablePoToken) {
+            // Reset any existing generator
+            poTokenGenerator?.reset()
+            
+            // Create new generator with improved error handling
             this.poTokenGenerator = PoTokenGenerator(webViewClient)
             println("DEBUG: PoToken generator initialized with WebView client")
+            
+            // Clear cache and reset session when WebView client changes
+            poTokenCache.clear()
+            currentSessionId = null
+            lastPoTokenGeneration = 0
+            
+            println("DEBUG: PoToken cache and session reset")
         } else {
             println("DEBUG: PoToken generation disabled in settings")
         }
+    }
+    
+    /**
+     * Get PoToken generator status for debugging
+     */
+    fun getPoTokenStatus(): String {
+        return if (!enablePoToken) {
+            "Disabled in settings"
+        } else {
+            poTokenGenerator?.getStatus() ?: "Not initialized"
+        }
+    }
+    
+    /**
+     * Reset PoToken generator and clear cache
+     */
+    fun resetPoTokenGenerator() {
+        poTokenGenerator?.reset()
+        poTokenCache.clear()
+        currentSessionId = null
+        lastPoTokenGeneration = 0
+        println("DEBUG: PoToken generator reset")
     }
 }
