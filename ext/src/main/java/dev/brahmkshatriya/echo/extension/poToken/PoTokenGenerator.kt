@@ -102,7 +102,7 @@ class PoTokenGenerator(
                     println("DEBUG: Streaming PoToken generated successfully")
                 }
 
-                Triple(webPoTokenGenerator!!, webPoTokenStreamingPot!!, shouldRecreated)
+                Triple(webPoTokenGenerator!!, webPoTokenStreamingPot!!, shouldRecreate)
             }
 
         val poTokenGenerator: PoTokenWebView = tripleResult.first
