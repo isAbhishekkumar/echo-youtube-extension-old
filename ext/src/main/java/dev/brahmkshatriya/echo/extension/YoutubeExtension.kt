@@ -230,6 +230,12 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
   private val useEnhancedVideoEndpoint
         get() = settings.getBoolean("enhanced_video_endpoint") != false
     
+  /**
+   * Public accessors for EnhancedVideoEndpoint
+   */
+  fun isPoTokenEnabled(): Boolean = enablePoToken
+  suspend fun generatePoTokenForVideoPublic(videoId: String): String? = generatePoTokenForVideo(videoId)
+    
     // Authentication state management
     private var isLoggedIn = false
     private var authCookie: String? = null
@@ -281,37 +287,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         } catch (e: Exception) {
             println("DEBUG: Failed to generate auth headers: ${e.message}")
             null
-        }
-    }
-    
-    /**
-     * Enhanced visitor data management with retry logic
-     */
-    private suspend fun ensureVisitorId() {
-        try {
-            println("DEBUG: Checking visitor ID, current: ${api.visitor_id}")
-            if (api.visitor_id == null) {
-                println("DEBUG: Getting new visitor ID")
-                var visitorError: Exception? = null
-                for (attempt in 1..3) {
-                    try {
-                        api.visitor_id = visitorEndpoint.getVisitorId()
-                        println("DEBUG: Got visitor ID on attempt $attempt: ${api.visitor_id}")
-                        return
-                    } catch (e: Exception) {
-                        visitorError = e
-                        println("DEBUG: Visitor ID attempt $attempt failed: ${e.message}")
-                        if (attempt < 3) {
-                            kotlinx.coroutines.delay(500L * attempt) 
-                        }
-                    }
-                }
-                throw visitorError ?: Exception("Failed to get visitor ID after 3 attempts")
-            } else {
-                println("DEBUG: Visitor ID already exists: ${api.visitor_id}")
-            }
-        } catch (e: Exception) {
-            println("DEBUG: Failed to initialize visitor ID: ${e.message}")
         }
     }
     
@@ -1710,7 +1685,10 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                     enablePoToken = enablePoToken
                 )
                 println("DEBUG: Enhanced video loading successful with client: ${enhancedResult.second}")
-                enhancedResult.first to null // type is not needed with enhanced endpoint
+                
+                // Parse the HttpResponse to get the video data
+                val videoData = enhancedResult.first.body<dev.toastbits.ytmkt.model.external.YoutubeFormatResponse>()
+                videoData to null // type is not needed with enhanced endpoint
             } catch (e: Exception) {
                 println("DEBUG: Enhanced video endpoint failed: ${e.message}")
                 println("DEBUG: Falling back to standard video endpoint")
@@ -1766,8 +1744,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                 }
             }
         }
-
-        println("DEBUG: Video type: $type")
 
         val resolvedTrack = null 
 

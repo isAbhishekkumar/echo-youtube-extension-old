@@ -4,8 +4,13 @@ import dev.brahmkshatriya.echo.extension.YoutubeExtension
 import dev.toastbits.ytmkt.impl.youtubei.YoutubeiApi
 import dev.toastbits.ytmkt.model.ApiEndpoint
 import io.ktor.client.call.body
-import io.ktor.client.request.request
+import io.ktor.client.request.headers
+import io.ktor.client.request.parameter
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -13,6 +18,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.security.MessageDigest
 
 /**
@@ -162,13 +169,13 @@ class EnhancedVideoEndpoint(
         videoId: String,
         playlistId: String? = null,
         enablePoToken: Boolean = true
-    ): Pair<YoutubeFormatResponse, String?> = coroutineScope {
+    ): Pair<HttpResponse, String?> = coroutineScope {
         println("DEBUG: Enhanced video loading for videoId: $videoId")
 
         // Generate PoToken if enabled
-        val poToken = if (enablePoToken && extension.enablePoToken) {
+        val poToken = if (enablePoToken && extension.isPoTokenEnabled()) {
             try {
-                extension.generatePoTokenForVideo(videoId)
+                extension.generatePoTokenForVideoPublic(videoId)
             } catch (e: Exception) {
                 println("DEBUG: PoToken generation failed: ${e.message}")
                 null
@@ -185,7 +192,7 @@ class EnhancedVideoEndpoint(
         }
 
         var lastException: Exception? = null
-        var successfulResponse: YoutubeFormatResponse? = null
+        var successfulResponse: HttpResponse? = null
         var successfulClient: ClientConfig? = null
 
         for (client in preferredClients) {
@@ -193,14 +200,15 @@ class EnhancedVideoEndpoint(
                 println("DEBUG: Trying client: ${client.name}")
                 
                 val response = requestWithClient(client, videoId, playlistId, poToken)
-                val formatResponse = response.body<YoutubeFormatResponse>()
                 
-                // Check if the response is valid
-                if (formatResponse.videoDetails.videoId == videoId && 
-                    formatResponse.streamingData.adaptiveFormats.isNotEmpty()) {
-                    
+                // Check if the response is valid by parsing it
+                val responseBody = response.body<JsonObject>()
+                val videoDetails = responseBody["videoDetails"]?.jsonObject
+                val streamingData = responseBody["streamingData"]?.jsonObject
+                
+                if (videoDetails != null && streamingData != null) {
                     println("DEBUG: Successfully loaded video with client: ${client.name}")
-                    successfulResponse = formatResponse
+                    successfulResponse = response
                     successfulClient = client
                     break
                 } else {
@@ -220,10 +228,11 @@ class EnhancedVideoEndpoint(
             try {
                 println("DEBUG: Trying basic web context as last resort")
                 val basicResponse = requestBasicWeb(videoId, playlistId)
-                val formatResponse = basicResponse.body<YoutubeFormatResponse>()
+                val responseBody = basicResponse.body<JsonObject>()
+                val videoDetails = responseBody["videoDetails"]?.jsonObject
                 
-                if (formatResponse.videoDetails.videoId == videoId) {
-                    successfulResponse = formatResponse
+                if (videoDetails != null) {
+                    successfulResponse = basicResponse
                     successfulClient = null
                 }
             } catch (e: Exception) {
@@ -250,12 +259,12 @@ class EnhancedVideoEndpoint(
     ): HttpResponse {
         val context = client.contextBuilder(api.visitor_id)
         
-        return api.client.request {
-            url("https://music.youtube.com/youtubei/v1/player?key=${client.apiKey}")
+        return api.client.post("https://music.youtube.com/youtubei/v1/player") {
+            parameter("key", client.apiKey)
+            contentType(ContentType.Application.Json)
             
             // Add enhanced headers
             headers {
-                append("Content-Type", "application/json")
                 append("X-Goog-Api-Format-Version", "1")
                 append("X-YouTube-Client-Name", client.name)
                 append("X-YouTube-Client-Version", client.version)
@@ -277,7 +286,6 @@ class EnhancedVideoEndpoint(
             }
             
             // Set request body
-            method = io.ktor.http.HttpMethod.Post
             setBody(context.apply {
                 put("videoId", videoId)
                 playlistId?.let { put("playlistId", it) }
@@ -299,13 +307,21 @@ class EnhancedVideoEndpoint(
             })
         }
 
-        return api.client.request {
-            endpointPath("player")
-            addApiHeadersWithoutAuthentication()
-            postWithBody(context) {
+        return api.client.post("https://music.youtube.com/youtubei/v1/player") {
+            parameter("key", "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX3")
+            contentType(ContentType.Application.Json)
+            headers {
+                append("X-Goog-Api-Format-Version", "1")
+                append("X-YouTube-Client-Name", "WEB")
+                append("X-YouTube-Client-Version", "2.2021111")
+                append("X-Origin", "https://music.youtube.com")
+                append("Referer", "https://music.youtube.com/")
+                append("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36")
+            }
+            setBody(context.apply {
                 put("videoId", videoId)
                 playlistId?.let { put("playlistId", it) }
-            }
+            })
         }
     }
 
@@ -316,7 +332,10 @@ class EnhancedVideoEndpoint(
         val enhancedResult = getVideoWithFallback(resolve, id, playlist)
         val web = if (resolve) {
             try {
-                request(webRemix, id, playlist).body<YoutubeFormatResponse>().videoDetails.musicVideoType
+                // Use the basic web request for legacy compatibility
+                val response = requestBasicWeb(id, playlist).body<JsonObject>()
+                val videoDetails = response["videoDetails"]?.jsonObject
+                videoDetails?.get("musicVideoType")?.jsonPrimitive?.content
             } catch (e: Exception) {
                 println("DEBUG: Web remix resolve failed: ${e.message}")
                 null
@@ -346,73 +365,3 @@ class EnhancedVideoEndpoint(
         })
     }
 }
-
-@Serializable
-data class YoutubeFormatResponse(
-    val streamingData: StreamingData,
-    val videoDetails: VideoDetails
-)
-
-@Serializable
-data class StreamingData(
-    val expiresInSeconds: String,
-    val hlsManifestUrl: String?,
-    val adaptiveFormats: List<AdaptiveFormat>
-)
-
-@Serializable
-data class AdaptiveFormat(
-    val itag: Long? = null,
-    val url: String? = null,
-    val mimeType: String,
-    val bitrate: Int,
-    val width: Long? = null,
-    val height: Long? = null,
-    val initRange: Range? = null,
-    val indexRange: Range? = null,
-    val lastModified: String? = null,
-    val contentLength: String? = null,
-    val quality: String? = null,
-    val fps: Long? = null,
-    val qualityLabel: String? = null,
-    val projectionType: String? = null,
-    val averageBitrate: Long? = null,
-    val approxDurationMs: String? = null,
-    val colorInfo: ColorInfo? = null,
-    val highReplication: Boolean? = null,
-    val audioQuality: String? = null,
-    val audioSampleRate: String? = null,
-    val audioChannels: Long? = null,
-    val loudnessDb: Double? = null
-)
-
-@Serializable
-data class ColorInfo(
-    val primaries: String? = null,
-    val transferCharacteristics: String? = null,
-    val matrixCoefficients: String? = null
-)
-
-@Serializable
-data class Range(
-    val start: String? = null,
-    val end: String? = null
-)
-
-@Serializable
-data class VideoDetails(
-    val videoId: String,
-    val title: String?,
-    val lengthSeconds: String,
-    val channelId: String,
-    val isOwnerViewing: Boolean? = null,
-    val isCrawlable: Boolean? = null,
-    val allowRatings: Boolean? = null,
-    val viewCount: String? = null,
-    val author: String,
-    val isPrivate: Boolean? = null,
-    val isUnpluggedCorpus: Boolean? = null,
-    val musicVideoType: String? = null,
-    val isLiveContent: Boolean? = null,
-    val shortDescription: String? = null,
-)
