@@ -2238,7 +2238,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     }
     
     // WebViewClient implementation for PoToken generation
-    override fun setWebViewClient(webViewClient: dev.brahmkshatriya.echo.common.helpers.WebViewClient) {
+    fun setWebViewClient(webViewClient: dev.brahmkshatriya.echo.common.helpers.WebViewClient) {
         this.webViewClient = webViewClient
         if (enablePoToken) {
             this.poTokenGenerator = PoTokenGenerator(webViewClient)

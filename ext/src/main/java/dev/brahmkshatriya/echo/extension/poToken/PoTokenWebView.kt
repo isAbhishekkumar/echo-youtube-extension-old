@@ -4,6 +4,7 @@ import dev.brahmkshatriya.echo.common.helpers.WebViewRequest
 import dev.brahmkshatriya.echo.common.models.NetworkRequest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -216,7 +217,8 @@ class PoTokenWebView(
                         "x-goog-api-key" to GOOGLE_API_KEY,
                         "x-user-agent" to "grpc-web-javascript/0.1"
                     ),
-                    method = NetworkRequest.Method.POST
+                    method = NetworkRequest.Method.POST,
+                    bodyBase64 = null
                 )
                 override val stopUrlRegex = Regex(".*")
                 override val javascriptToEvaluate = """
@@ -230,6 +232,10 @@ class PoTokenWebView(
                     })();
                 """
                 override val maxTimeout = 30000L // 30 seconds
+                
+                override suspend fun onStop(url: NetworkRequest, data: String?): String? {
+                    return null
+                }
             }
 
             val result = webViewClient.await(true, "Creating BotGuard challenge", request)
@@ -252,7 +258,9 @@ class PoTokenWebView(
             val request = object : WebViewRequest.Evaluate<String> {
                 override val initialUrl = NetworkRequest(
                     url = "data:text/html;charset=utf-8,${PO_TOKEN_HTML.encodeToByteArray().toString()}",
-                    headers = emptyMap()
+                    headers = emptyMap(),
+                    method = NetworkRequest.Method.GET,
+                    bodyBase64 = null
                 )
                 override val stopUrlRegex = Regex("data:.*")
                 override val javascriptToEvaluate = """
@@ -270,6 +278,10 @@ class PoTokenWebView(
                     })();
                 """
                 override val maxTimeout = 60000L // 60 seconds
+                
+                override suspend fun onStop(url: NetworkRequest, data: String?): String? {
+                    return null
+                }
             }
 
             val result = webViewClient.await(true, "Running BotGuard", request)
@@ -316,7 +328,8 @@ class PoTokenWebView(
                         "x-goog-api-key" to GOOGLE_API_KEY,
                         "x-user-agent" to "grpc-web-javascript/0.1"
                     ),
-                    method = NetworkRequest.Method.POST
+                    method = NetworkRequest.Method.POST,
+                    bodyBase64 = null
                 )
                 override val stopUrlRegex = Regex(".*")
                 override val javascriptToEvaluate = """
@@ -330,6 +343,10 @@ class PoTokenWebView(
                     })();
                 """
                 override val maxTimeout = 30000L // 30 seconds
+                
+                override suspend fun onStop(url: NetworkRequest, data: String?): String? {
+                    return null
+                }
             }
 
             val result = webViewClient.await(true, "Generating integrity token", request)
@@ -360,7 +377,9 @@ class PoTokenWebView(
             val request = object : WebViewRequest.Evaluate<String> {
                 override val initialUrl = NetworkRequest(
                     url = "data:text/html;charset=utf-8,${PO_TOKEN_HTML.encodeToByteArray().toString()}",
-                    headers = emptyMap()
+                    headers = emptyMap(),
+                    method = NetworkRequest.Method.GET,
+                    bodyBase64 = null
                 )
                 override val stopUrlRegex = Regex("data:.*")
                 override val javascriptToEvaluate = """
@@ -377,6 +396,10 @@ class PoTokenWebView(
                     })();
                 """
                 override val maxTimeout = 30000L // 30 seconds
+                
+                override suspend fun onStop(url: NetworkRequest, data: String?): String? {
+                    return null
+                }
             }
 
             val result = webViewClient.await(true, "Generating PoToken", request)
