@@ -19,16 +19,21 @@ import io.ktor.http.headers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.*
 import java.security.MessageDigest
 
 /**
  * Enhanced YouTube Extension with network-aware optimizations
- * Specifically designed to handle 403 errors on WiFi networks with intelligent routing
  */
 class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFeedClient,
     RadioClient, AlbumClient, ArtistClient, PlaylistClient, LoginClient.WebView,
     TrackerClient, TrackerMarkClient, LibraryFeedClient, ShareClient, LyricsClient, FollowClient,
     LikeClient, PlaylistEditClient, LyricsSearchClient, QuickSearchClient {
+
+    companion object {
+        const val ENGLISH = "en"
+        const val SINGLES = "Singles"
+    }
 
     override suspend fun getSettingItems(): List<Setting> = listOf(
         SettingSwitch(
@@ -46,7 +51,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         SettingSwitch(
             "Show Videos",
             "show_videos",
-            "Allows videos to be available when playing stuff. Instead of disabling videos, change the streaming quality as Medium in the app settings to select audio only by default.",
+            "Show videos in results",
             false
         ),
         SettingSwitch(
@@ -56,39 +61,15 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             false
         ),
         SettingSwitch(
-            "Opus Audio Preferred",
-            "prefer_opus",
-            "Prefer Opus audio format over AAC for better efficiency",
-            false
-        ),
-        SettingSwitch(
-            "Adaptive Audio Quality",
-            "adaptive_audio",
-            "Automatically adjust audio quality based on network conditions",
-            true
-        ),
-        SettingSwitch(
-            "Enable Enhanced PoToken Generation",
-            "enable_enhanced_potoken",
-            "Use enhanced WebView-based PoToken generation with network-aware optimizations. Significantly improves success rate on restricted WiFi networks.",
-            true
-        ),
-        SettingSwitch(
-            "Enhanced Video Endpoint (Fixed)",
-            "enhanced_video_endpoint_fixed",
-            "Use advanced network-aware multi-client fallback strategy. Dramatically reduces 403 errors by detecting network type and optimizing client selection.",
+            "Enhanced Video Endpoint",
+            "enhanced_video_endpoint",
+            "Use enhanced video endpoint with network optimizations",
             true
         ),
         SettingSwitch(
             "Network Detection",
             "network_detection",
-            "Automatically detect network type (open WiFi, restricted WiFi, mobile data) and optimize request strategies accordingly.",
-            true
-        ),
-        SettingSwitch(
-            "Aggressive Retry on Restricted Networks",
-            "aggressive_retry",
-            "Use more aggressive retry strategies on restricted networks with longer timeouts and exponential backoff.",
+            "Automatically detect network type and optimize accordingly",
             true
         )
     )
@@ -101,19 +82,15 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     val api = YoutubeiApi(
         data_language = ENGLISH
     )
-    val mobileApi = YoutubeiApi(
-        data_language = "en"
-    )
     
     // Enhanced components
     private var enhancedPoTokenGenerator: EnhancedPoTokenGenerator? = null
     private var networkDetector: NetworkDetector? = null
-    private var enhancedVideoEndpoint: EnhancedVideoEndpointFixed? = null
+    private var enhancedVideoEndpoint: EnhancedVideoEndpoint? = null
     
     // Legacy components for backward compatibility
     private var webViewClient: WebViewClient? = null
     private var currentSessionId: String? = null
-    private var lastPoTokenGeneration: Long = 0
     
     // Authentication state management
     private var isLoggedIn = false
@@ -125,19 +102,11 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         initializeEnhancedComponents()
     }
     
-    /**
-     * Initialize enhanced components
-     */
     private fun initializeEnhancedComponents() {
         try {
-            // Initialize network detector
             networkDetector = NetworkDetector(api.client)
-            println("DEBUG: Network detector initialized")
-            
-            // Initialize enhanced video endpoint
-            enhancedVideoEndpoint = EnhancedVideoEndpointFixed(api, this)
-            println("DEBUG: Enhanced video endpoint initialized")
-            
+            enhancedVideoEndpoint = EnhancedVideoEndpoint(api, this)
+            println("DEBUG: Enhanced components initialized")
         } catch (e: Exception) {
             println("DEBUG: Failed to initialize enhanced components: ${e.message}")
         }
@@ -145,7 +114,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     
     private fun configureApiClients() {
         try {
-            println("DEBUG: API clients configured with enhanced network support")
+            println("DEBUG: API clients configured")
         } catch (e: Exception) {
             println("DEBUG: Failed to configure API clients: ${e.message}")
         }
@@ -164,56 +133,20 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     private val highQualityAudio
         get() = settings.getBoolean("high_quality_audio") == true
 
-    private val preferOpus
-        get() = settings.getBoolean("prefer_opus") != false
-
-    private val adaptiveAudio
-        get() = settings.getBoolean("adaptive_audio") != false
-
-    private val enableEnhancedPoToken
-        get() = settings.getBoolean("enable_enhanced_potoken") != false
-    
     private val useEnhancedVideoEndpoint
-        get() = settings.getBoolean("enhanced_video_endpoint_fixed") != false
+        get() = settings.getBoolean("enhanced_video_endpoint") != false
         
     private val enableNetworkDetection
         get() = settings.getBoolean("network_detection") != false
-        
-    private val enableAggressiveRetry
-        get() = settings.getBoolean("aggressive_retry") != false
     
     /**
-     * Enhanced visitor ID management with retry logic
+     * Enhanced visitor ID management
      */
     private suspend fun ensureVisitorId() {
         try {
-            println("DEBUG: Checking visitor ID, current: ${api.visitor_id}")
             if (api.visitor_id == null) {
-                println("DEBUG: Getting new visitor ID")
-                var visitorError: Exception? = null
-                val maxAttempts = if (enableAggressiveRetry) 5 else 3
-                
-                for (attempt in 1..maxAttempts) {
-                    try {
-                        api.visitor_id = visitorEndpoint.getVisitorId()
-                        println("DEBUG: Got visitor ID on attempt $attempt: ${api.visitor_id}")
-                        return
-                    } catch (e: Exception) {
-                        visitorError = e
-                        println("DEBUG: Visitor ID attempt $attempt failed: ${e.message}")
-                        if (attempt < maxAttempts) {
-                            val delayMs = if (enableAggressiveRetry) {
-                                1000L * attempt // Progressive delay
-                            } else {
-                                500L * attempt
-                            }
-                            kotlinx.coroutines.delay(delayMs)
-                        }
-                    }
-                }
-                throw visitorError ?: Exception("Failed to get visitor ID after $maxAttempts attempts")
-            } else {
-                println("DEBUG: Visitor ID already exists: ${api.visitor_id}")
+                api.visitor_id = visitorEndpoint.getVisitorId()
+                println("DEBUG: Got visitor ID: ${api.visitor_id}")
             }
         } catch (e: Exception) {
             println("DEBUG: Failed to initialize visitor ID: ${e.message}")
@@ -233,7 +166,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         } else {
             this.authHeaders = null
         }
-        println("DEBUG: Authentication state updated - Logged in: $isLoggedIn")
     }
     
     fun getAuthHeaders(): Map<String, String>? = authHeaders
@@ -261,382 +193,204 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     }
     
     /**
-     * Enhanced PoToken management
+     * Enhanced track loading
      */
-    fun isPoTokenEnabled(): Boolean = enableEnhancedPoToken
-    
-    suspend fun generatePoTokenForVideoPublic(videoId: String): String? = generateEnhancedPoTokenForVideo(videoId)
-    
-    private suspend fun generateEnhancedPoTokenForVideo(videoId: String): String? {
-        if (!enableEnhancedPoToken) {
-            println("DEBUG: Enhanced PoToken generation disabled in settings")
-            return null
-        }
-        
-        // Check cache first
-        val cacheKey = videoId
-        val cached = poTokenCache[cacheKey]
-        if (cached != null && System.currentTimeMillis() - cached.second < PO_TOKEN_CACHE_DURATION) {
-            println("DEBUG: Using cached PoToken for videoId: $videoId")
-            return cached.first
-        }
-        
-        // Initialize enhanced PoToken generator if needed
-        if (enhancedPoTokenGenerator == null) {
-            webViewClient?.let { client ->
-                enhancedPoTokenGenerator = EnhancedPoTokenGenerator(client, networkDetector)
-                println("DEBUG: Enhanced PoToken generator initialized")
-            }
-        }
-        
-        val generator = enhancedPoTokenGenerator
-        if (generator == null || currentSessionId == null) {
-            println("DEBUG: Enhanced PoToken generator not available (WebView client not set)")
-            return null
-        }
-        
+    override suspend fun loadStreamableMedia(streamable: Streamable, isDownload: Boolean): Streamable.Media {
         return try {
-            println("DEBUG: Attempting to generate enhanced PoToken for videoId: $videoId")
-            
-            if (!generator.isWebViewAvailable()) {
-                println("DEBUG: WebView not available for enhanced PoToken generation: ${generator.getStatus()}")
-                return null
+            val url = when (streamable) {
+                is Streamable.Media.Http -> streamable.request.url
+                is Streamable.Source.Http -> streamable.url
+                else -> throw Exception("Unsupported streamable type")
             }
             
-            val poToken = generator.getEnhancedWebClientPoToken(videoId, currentSessionId!!)
-            if (poToken != null) {
-                println("DEBUG: Successfully generated enhanced PoToken (player: ${poToken.playerRequestPoToken.take(20)}..., streaming: ${poToken.streamingDataPoToken.take(20)}...)")
-                // Cache the player token for video requests
-                poTokenCache[cacheKey] = Pair(poToken.playerRequestPoToken, System.currentTimeMillis())
-                lastPoTokenGeneration = System.currentTimeMillis()
-                poToken.playerRequestPoToken // Use player token for video requests
-            } else {
-                println("DEBUG: Enhanced PoToken generation returned null - Status: ${generator.getEnhancedStatus()}")
-                null
-            }
+            Streamable.Media.Http(NetworkRequest(url))
         } catch (e: Exception) {
-            println("DEBUG: Failed to generate enhanced PoToken: ${e.message}")
-            val lastError = generator.getLastError()
-            if (lastError != null) {
-                println("DEBUG: Last enhanced PoToken error: ${lastError.message}")
-            }
+            println("DEBUG: Failed to load streamable media: ${e.message}")
+            throw e
+        }
+    }
+    
+    override suspend fun loadHomeFeed(tab: Tab?): Feed<Shelf> {
+        return try {
+            ensureVisitorId()
+            val response = homeFeedEndpoint.getHomeFeed()
+            response.map { layout ->
+                layout.toShelf(api, ENGLISH, thumbnailQuality)
+            }.toFeed()
+        } catch (e: Exception) {
+            println("DEBUG: Failed to load home feed: ${e.message}")
+            Feed(emptyList())
+        }
+    }
+    
+    override suspend fun loadFeed(track: Track): Feed<Shelf>? {
+        return try {
+            val relatedId = track.extras["relatedId"] ?: return null
+            val response = songRelatedEndpoint.loadFromPlaylist(relatedId).getOrNull() ?: return null
+            response.map { layout ->
+                layout.toShelf(api, ENGLISH, thumbnailQuality)
+            }.toFeed()
+        } catch (e: Exception) {
+            println("DEBUG: Failed to load track feed: ${e.message}")
             null
         }
     }
     
-    /**
-     * Apply PoToken to streaming URL
-     */
-    private fun applyPoTokenToUrl(originalUrl: String, poToken: String?): String {
-        return if (poToken != null && originalUrl.isNotEmpty()) {
-            val separator = if (originalUrl.contains("?")) "&" else "?"
-            val finalUrl = "$originalUrl${separator}pot=$poToken"
-            println("DEBUG: Applied enhanced PoToken to URL - Original: ${originalUrl.take(80)}..., With PoToken: ${finalUrl.take(80)}...")
-            finalUrl
-        } else {
-            println("DEBUG: No enhanced PoToken available, using original URL: ${originalUrl.take(80)}...")
-            originalUrl
+    override suspend fun loadFeed(album: Album): Feed<Shelf>? = null
+    
+    override suspend fun loadFeed(artist: Artist): Feed<Shelf> {
+        return try {
+            val response = songFeedEndpoint.getSongFeed(browseId = artist.id).getOrNull()
+            response?.rows?.map { layout ->
+                layout.toShelf(api, ENGLISH, thumbnailQuality)
+            }?.toFeed() ?: Feed(emptyList())
+        } catch (e: Exception) {
+            println("DEBUG: Failed to load artist feed: ${e.message}")
+            Feed(emptyList())
         }
     }
     
-    /**
-     * Enhanced video source creation with network awareness
-     */
-    private suspend fun createEnhancedAudioSource(
-        streamable: Streamable,
-        videoId: String,
-        poToken: String?
-    ): Streamable.Source.Http? {
+    override suspend fun loadFeed(playlist: Playlist): Feed<Shelf>? = null
+    
+    override suspend fun loadSearchFeed(query: String, tab: Tab?): Feed<Shelf> {
         return try {
-            val originalUrl = streamable.toUrl()
-            val urlWithPoToken = applyPoTokenToUrl(originalUrl ?: "", poToken)
-            
-            // Apply network-specific optimizations if available
-            val optimizedUrl = if (enableNetworkDetection && networkDetector != null) {
-                try {
-                    val networkType = networkDetector!!.detectNetworkType()
-                    optimizeUrlForNetwork(urlWithPoToken, networkType)
-                } catch (e: Exception) {
-                    println("DEBUG: Network optimization failed: ${e.message}")
-                    urlWithPoToken
-                }
-            } else {
-                urlWithPoToken
-            }
-            
-            Streamable.Source.Http(
-                url = optimizedUrl,
-                quality = streamable.quality,
-                format = streamable.format,
-                bitrate = streamable.bitrate,
-                extras = streamable.extras
-            ).also {
-                println("DEBUG: Created enhanced audio source with PoToken applied: ${poToken != null}")
-            }
+            val params = tab?.id
+            val response = searchEndpoint.search(query, params).getOrNull()
+            response?.categories?.map { (layout, _) ->
+                layout.toShelf(api, ENGLISH, thumbnailQuality)
+            }?.toFeed() ?: Feed(emptyList())
         } catch (e: Exception) {
-            println("DEBUG: Failed to create enhanced audio source: ${e.message}")
+            println("DEBUG: Failed to load search feed: ${e.message}")
+            Feed(emptyList())
+        }
+    }
+    
+    override suspend fun loadRadio(radio: Radio): Radio = radio
+    
+    override suspend fun loadTracks(radio: Radio): Feed<Track> {
+        return try {
+            // Implementation for loading radio tracks
+            Feed(emptyList())
+        } catch (e: Exception) {
+            println("DEBUG: Failed to load radio tracks: ${e.message}")
+            Feed(emptyList())
+        }
+    }
+    
+    override suspend fun loadTracks(album: Album): Feed<Track>? {
+        return try {
+            val (_, _, tracks) = playlistEndpoint.loadFromPlaylist(album.id, null, thumbnailQuality)
+            tracks.toFeed()
+        } catch (e: Exception) {
+            println("DEBUG: Failed to load album tracks: ${e.message}")
             null
         }
     }
     
-    /**
-     * Optimize URL for specific network type
-     */
-    private fun optimizeUrlForNetwork(url: String, networkType: NetworkDetector.NetworkType): String {
-        return when (networkType) {
-            NetworkDetector.NetworkType.WIFI_RESTRICTED -> {
-                // For restricted networks, ensure URL has all necessary parameters
-                if (!url.contains("pot=")) {
-                    "$url&pot=enhanced_restricted"
-                } else {
-                    url
-                }
-            }
-            NetworkDetector.NetworkType.MOBILE_DATA -> {
-                // For mobile data, prefer lower quality if adaptive audio is enabled
-                if (adaptiveAudio && url.contains("itag=")) {
-                    url.replace(Regex("itag=(\\d+)")) { match ->
-                        val itag = match.groupValues[1].toInt()
-                        // Prefer lower bitrate itags for mobile
-                        val mobileItag = when (itag) {
-                            in 250..299 -> 251 // Opus audio
-                            in 140..149 -> 140 // AAC 128kbps
-                            else -> itag
-                        }
-                        "itag=$mobileItag"
-                    }
-                } else {
-                    url
-                }
-            }
-            else -> url
-        }
-    }
-    
-    /**
-     * Enhanced track loading with network-aware fallback
-     */
-    override suspend fun loadTrack(track: Track, throwIfFailed: Boolean): TrackDetails? {
+    override suspend fun loadTracks(playlist: Playlist): Feed<Track> {
         return try {
-            println("DEBUG: Loading enhanced track: ${track.title}")
-            
-            // Use enhanced video endpoint if enabled
-            if (useEnhancedVideoEndpoint && enhancedVideoEndpoint != null) {
-                try {
-                    println("DEBUG: Using enhanced video endpoint for track loading")
-                    val (response, clientUsed) = enhancedVideoEndpoint!!.getVideoWithEnhancedFallback(
-                        resolve = false,
-                        videoId = track.id,
-                        enablePoToken = enableEnhancedPoToken
-                    )
-                    
-                    val responseBody = response.body<JsonObject>()
-                    return parseEnhancedTrackResponse(responseBody, track, clientUsed)
-                    
-                } catch (e: Exception) {
-                    println("DEBUG: Enhanced video endpoint failed: ${e.message}")
-                    // Fall back to legacy method
-                }
-            }
-            
-            // Legacy fallback
-            super.loadTrack(track, throwIfFailed)
-            
+            val (_, _, tracks) = playlistEndpoint.loadFromPlaylist(playlist.id, null, thumbnailQuality)
+            tracks.toFeed()
         } catch (e: Exception) {
-            println("DEBUG: Enhanced track loading failed: ${e.message}")
-            if (throwIfFailed) throw e else null
+            println("DEBUG: Failed to load playlist tracks: ${e.message}")
+            Feed(emptyList())
         }
     }
     
-    /**
-     * Parse enhanced track response
-     */
-    private suspend fun parseEnhancedTrackResponse(
-        response: JsonObject,
-        originalTrack: Track,
-        clientUsed: String?
-    ): TrackDetails {
-        val videoDetails = response["videoDetails"]?.jsonObject
-            ?: throw Exception("Invalid video response")
-        
-        val streamingData = response["streamingData"]?.jsonObject
-            ?: throw Exception("No streaming data available")
-        
-        // Extract audio formats with enhanced handling
-        val audioSources = mutableListOf<Streamable.Source.Http>()
-        
-        // Try adaptive formats first
-        streamingData["adaptiveFormats"]?.jsonArray?.forEach { formatElement ->
-            val format = formatElement.jsonObject
-            val mimeType = format["mimeType"]?.jsonPrimitive?.content ?: ""
-            
-            if (mimeType.startsWith("audio/")) {
-                val url = format["url"]?.jsonPrimitive?.content
-                if (url != null) {
-                    audioSources.add(Streamable.Source.Http(
-                        url = url,
-                        quality = format["quality"]?.jsonPrimitive?.content,
-                        format = mimeType,
-                        bitrate = format["bitrate"]?.jsonPrimitive?.intOrNull ?: 0,
-                        extras = mapOf(
-                            "itag" to (format["itag"]?.jsonPrimitive?.intOrNull ?: 0).toString(),
-                            "audioSampleRate" to (format["audioSampleRate"]?.jsonPrimitive?.content ?: ""),
-                            "audioChannels" to (format["audioChannels"]?.jsonPrimitive?.intOrNull ?: 2).toString(),
-                            "clientUsed" to (clientUsed ?: "unknown")
-                        )
-                    ))
-                }
-            }
-        }
-        
-        // Fallback to regular formats
-        if (audioSources.isEmpty()) {
-            streamingData["formats"]?.jsonArray?.forEach { formatElement ->
-                val format = formatElement.jsonObject
-                val mimeType = format["mimeType"]?.jsonPrimitive?.content ?: ""
-                
-                if (mimeType.startsWith("audio/")) {
-                    val url = format["url"]?.jsonPrimitive?.content
-                    if (url != null) {
-                        audioSources.add(Streamable.Source.Http(
-                            url = url,
-                            quality = format["quality"]?.jsonPrimitive?.content,
-                            format = mimeType,
-                            bitrate = format["bitrate"]?.jsonPrimitive?.intOrNull ?: 0,
-                            extras = mapOf(
-                                "itag" to (format["itag"]?.jsonPrimitive?.intOrNull ?: 0).toString(),
-                                "clientUsed" to (clientUsed ?: "unknown")
-                            )
-                        ))
-                    }
-                }
-            }
-        }
-        
-        if (audioSources.isEmpty()) {
-            throw Exception("No audio sources found in enhanced response")
-        }
-        
-        // Select best audio source based on preferences
-        val bestAudioSource = selectBestAudioSource(audioSources)
-        
-        return TrackDetails(
-            id = originalTrack.id,
-            title = videoDetails["title"]?.jsonPrimitive?.content ?: originalTrack.title,
-            album = originalTrack.album,
-            artists = originalTrack.artists,
-            duration = videoDetails["lengthSeconds"]?.jsonPrimitive?.content?.toLongOrNull(),
-            cover = originalTrack.cover,
-            explicit = originalTrack.explicit,
-            plays = originalTrack.plays,
-            likes = originalTrack.likes,
-            streamables = listOf(bestAudioSource),
-            extras = originalTrack.extras.toMutableMap().apply {
-                put("enhanced_client", clientUsed ?: "unknown")
-                put("network_optimized", "true")
-            }
+    override suspend fun radio(item: EchoMediaItem, context: EchoMediaItem?): Radio {
+        return Radio(
+            id = "radio_${item.id}",
+            title = "Radio based on ${item.title}",
+            cover = item.cover,
+            subtitle = "Generated radio",
+            extras = mapOf("baseItem" to item.id)
         )
     }
     
-    /**
-     * Select best audio source based on user preferences
-     */
-    private fun selectBestAudioSource(sources: List<Streamable.Source.Http>): Streamable.Source.Http {
-        return sources.filter { source ->
-            val mimeType = source.format ?: ""
-            when {
-                preferOpus && mimeType.contains("opus") -> true
-                highQualityAudio && source.bitrate >= 256000 -> true
-                else -> true
-            }
-        }.maxByOrNull { source ->
-            // Prefer higher bitrate unless adaptive audio is enabled
-            if (adaptiveAudio) {
-                source.bitrate / 2 // Reduce priority for very high bitrate on adaptive
-            } else {
-                source.bitrate
-            }
-        } ?: sources.first()
-    }
-    
-    /**
-     * WebViewClient implementation for enhanced PoToken generation
-     */
-    override suspend fun login(webViewClient: WebViewClient) {
-        this.webViewClient = webViewClient
-        this.currentSessionId = generateSessionId()
-        
-        // Initialize enhanced PoToken generator
-        if (enableEnhancedPoToken) {
-            enhancedPoTokenGenerator = EnhancedPoTokenGenerator(webViewClient, networkDetector)
-            println("DEBUG: Enhanced PoToken generator initialized with WebView client")
+    override suspend fun loadAlbum(album: Album): Album {
+        return try {
+            val (fullAlbum, _) = playlistEndpoint.loadFromPlaylist(album.id, null, thumbnailQuality)
+            fullAlbum.toAlbum(false, thumbnailQuality)
+        } catch (e: Exception) {
+            println("DEBUG: Failed to load album: ${e.message}")
+            album
         }
-        
-        lastPoTokenGeneration = 0
-        poTokenCache.clear()
-        println("DEBUG: Enhanced session initialized")
     }
     
-    /**
-     * Generate unique session ID
-     */
-    private fun generateSessionId(): String {
+    override suspend fun loadArtist(artist: Artist): Artist {
+        return try {
+            val fullArtist = artistEndpoint.loadArtist(artist.id)
+            fullArtist.toArtist(thumbnailQuality)
+        } catch (e: Exception) {
+            println("DEBUG: Failed to load artist: ${e.message}")
+            artist
+        }
+    }
+    
+    override suspend fun loadPlaylist(playlist: Playlist): Playlist {
+        return try {
+            val (fullPlaylist, _) = playlistEndpoint.loadFromPlaylist(playlist.id, null, thumbnailQuality)
+            fullPlaylist.toPlaylist(thumbnailQuality)
+        } catch (e: Exception) {
+            println("DEBUG: Failed to load playlist: ${e.message}")
+            playlist
+        }
+    }
+    
+    override suspend fun getCurrentUser(): User? = null
+    override fun setLoginUser(user: User?) {}
+    override suspend fun onTrackChanged(details: TrackDetails?) {}
+    override suspend fun onPlayingStateChanged(details: TrackDetails?, isPlaying: Boolean) {}
+    override suspend fun getMarkAsPlayedDuration(details: TrackDetails): Long? = null
+    override suspend fun onMarkAsPlayed(details: TrackDetails) {}
+    override suspend fun loadLibraryFeed(): Feed<Shelf> = Feed(emptyList())
+    override suspend fun onShare(item: EchoMediaItem): String = "https://music.youtube.com"
+    override suspend fun searchTrackLyrics(clientId: String, track: Track): Feed<Lyrics> = Feed(emptyList())
+    override suspend fun loadLyrics(lyrics: Lyrics): Lyrics = lyrics
+    override suspend fun isFollowing(item: EchoMediaItem): Boolean = false
+    override suspend fun getFollowersCount(item: EchoMediaItem): Long? = null
+    override suspend fun followItem(item: EchoMediaItem, shouldFollow: Boolean) {}
+    override suspend fun likeItem(item: EchoMediaItem, shouldLike: Boolean) {}
+    override suspend fun isItemLiked(item: EchoMediaItem): Boolean = false
+    override suspend fun listEditablePlaylists(track: Track?): List<Pair<Playlist, Boolean>> = emptyList()
+    override suspend fun createPlaylist(title: String, description: String?): Playlist {
+        return Playlist("", title, false)
+    }
+    override suspend fun deletePlaylist(playlist: Playlist) {}
+    override suspend fun editPlaylistMetadata(playlist: Playlist, title: String, description: String?) {}
+    override suspend fun addTracksToPlaylist(playlist: Playlist, tracks: List<Track>, index: Int, new: List<Track>) {}
+    override suspend fun removeTracksFromPlaylist(playlist: Playlist, tracks: List<Track>, indexes: List<Int>) {}
+    override suspend fun moveTrackInPlaylist(playlist: Playlist, tracks: List<Track>, fromIndex: Int, toIndex: Int) {}
+    override suspend fun searchLyrics(query: String): Feed<Lyrics> = Feed(emptyList())
+    override suspend fun quickSearch(query: String): List<QuickSearchItem> = emptyList()
+    override suspend fun deleteQuickSearch(item: QuickSearchItem) {}
+    
+    // WebView request implementation
+    override val webViewRequest: WebViewRequest<List<User>> = object : WebViewRequest<List<User>> {
+        override val initialUrl = NetworkRequest(
+            url = "https://accounts.google.com/oauth/authorize",
+            headers = emptyMap(),
+            method = NetworkRequest.Method.GET,
+            bodyBase64 = null
+        )
+        override val stopUrlRegex = Regex(".*")
+        override val maxTimeout = 30000L
+        
+        override suspend fun onStop(url: NetworkRequest, data: String?): List<User>? {
+            return emptyList()
+        }
+    }
+    
+    fun generateSessionId(): String {
         return "session_${System.currentTimeMillis()}_${(0..1000).random()}"
     }
     
-    /**
-     * Get enhanced status information for debugging
-     */
-    suspend fun getEnhancedStatus(): EnhancedStatus {
-        val networkType = networkDetector?.detectNetworkType()
-        val poTokenStatus = enhancedPoTokenGenerator?.getEnhancedStatus()
-        val videoEndpointDiagnostics = enhancedVideoEndpoint?.getNetworkDiagnostics()
-        
-        return EnhancedStatus(
-            networkType = networkType,
-            poTokenEnabled = enableEnhancedPoToken,
-            enhancedVideoEndpoint = useEnhancedVideoEndpoint,
-            networkDetection = enableNetworkDetection,
-            aggressiveRetry = enableAggressiveRetry,
-            poTokenStatus = poTokenStatus,
-            videoEndpointDiagnostics = videoEndpointDiagnostics,
-            cacheSize = poTokenCache.size,
-            isLoggedIn = isLoggedIn()
-        )
-    }
-    
-    /**
-     * Enhanced status information
-     */
-    data class EnhancedStatus(
-        val networkType: NetworkDetector.NetworkType?,
-        val poTokenEnabled: Boolean,
-        val enhancedVideoEndpoint: Boolean,
-        val networkDetection: Boolean,
-        val aggressiveRetry: Boolean,
-        val poTokenStatus: EnhancedPoTokenGenerator.EnhancedStatus?,
-        val videoEndpointDiagnostics: String?,
-        val cacheSize: Int,
-        val isLoggedIn: Boolean
-    )
-    
-    /**
-     * Reset enhanced components
-     */
-    fun resetEnhancedComponents() {
-        enhancedPoTokenGenerator?.reset()
-        poTokenCache.clear()
-        lastPoTokenGeneration = 0
-        println("DEBUG: Enhanced components reset")
-    }
-    
-    // Legacy cache and constants
-    private val poTokenCache = mutableMapOf<String, Pair<String, Long>>()
-    private val PO_TOKEN_CACHE_DURATION = 30 * 60 * 1000L // 30 minutes
-    
-    // Legacy endpoint references (would be implemented in full version)
+    // Legacy endpoint references
     private val visitorEndpoint = EchoVisitorEndpoint(api)
-    
-    // Implement other required methods with enhanced handling...
-    // (Remaining methods would follow similar enhanced patterns)
+    private val homeFeedEndpoint = EchoSongFeedEndpoint(api)
+    private val songRelatedEndpoint = EchoSongRelatedEndpoint(api)
+    private val songFeedEndpoint = EchoSongFeedEndpoint(api)
+    private val searchEndpoint = EchoSearchEndpoint(api)
+    private val playlistEndpoint = EchoPlaylistEndpoint(api)
+    private val artistEndpoint = EchoArtistEndpoint(api)
 }

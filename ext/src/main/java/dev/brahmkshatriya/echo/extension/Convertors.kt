@@ -16,8 +16,6 @@ import dev.brahmkshatriya.echo.common.models.Track
 import dev.brahmkshatriya.echo.common.models.Track.Type
 import dev.brahmkshatriya.echo.common.models.Track.Playable
 import dev.brahmkshatriya.echo.common.models.User
-import dev.brahmkshatriya.echo.extension.YoutubeExtension.Companion.ENGLISH
-import dev.brahmkshatriya.echo.extension.YoutubeExtension.Companion.SINGLES
 import dev.brahmkshatriya.echo.extension.endpoints.GoogleAccountResponse
 import dev.toastbits.ytmkt.impl.youtubei.YoutubeiApi
 import dev.toastbits.ytmkt.model.external.ThumbnailProvider
@@ -29,6 +27,10 @@ import dev.toastbits.ytmkt.model.external.mediaitem.YtmSong
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import kotlinx.serialization.json.Json
+
+// Use companion constants from YoutubeExtension
+private const val ENGLISH = "en"
+private const val SINGLES = "Singles"
 
 // Extension function to create a Date object from a string year
 fun String.toDate(): Date = Date(this.toInt())
@@ -63,8 +65,7 @@ suspend fun MediaItemLayout.toShelf(
             more = view_more?.getBrowseParamsData()?.browse_id?.let { id ->
                 val pagedData = PagedData.Single<EchoMediaItem> {
                     try {
-                        val rows =
-                            api.GenericFeedViewMorePage.getGenericFeedViewMorePage(id).getOrThrow()
+                        val rows = api.GenericFeedViewMorePage.getGenericFeedViewMorePage(id).getOrThrow()
                         rows.mapNotNull { itemLayout ->
                             try {
                                 itemLayout.toEchoMediaItem(single, quality)
@@ -231,7 +232,6 @@ fun YtmSong.toTrack(
         Track(
             id = id,
             title = name ?: "Unknown",
-            type = trackType,
             artists = artists?.map { it.toArtist(quality) } ?: emptyList(),
             cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(crop = true)
                 ?: getCover(id, quality),
@@ -259,7 +259,6 @@ fun YtmSong.toTrack(
         Track(
             id = id,
             title = name ?: "Unknown Track",
-            type = Track.Type.Song,
             artists = emptyList(),
             cover = getCover(id, quality),
             album = null,
@@ -298,7 +297,7 @@ fun YtmArtist.toArtist(
             id = id,
             name = name ?: "Unknown",
             cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(mapOf()),
-            bio = description,
+            subtitle = description,
             extras = mutableMapOf<String, String>().apply {
                 subscribe_channel_id?.let { put("subId", it) }
                 subscriber_count?.let { put("subscriberCount", it.toString()) }
@@ -314,7 +313,7 @@ fun YtmArtist.toArtist(
             id = id,
             name = name ?: "Unknown Artist",
             cover = null,
-            bio = null,
+            subtitle = null,
             extras = mapOf("genuineArtist" to "true")
         )
     }
@@ -331,82 +330,3 @@ fun YtmArtist.toUser(
                 count >= 1000 -> "${(count / 1000).toInt()}K subscribers"
                 else -> "$count subscribers"
             }
-        } ?: "Artist"
-        
-        User(
-            id = id,
-            name = name ?: "Unknown",
-            cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(mapOf()),
-            subtitle = subscriberCountText,
-            extras = mutableMapOf<String, String>().apply {
-                subscribe_channel_id?.let { put("subId", it) }
-                subscriber_count?.let { put("subscriberCount", it.toString()) }
-                subscribed?.let { put("isSubscribed", it.toString()) }
-                // Add a flag to identify this as originally an Artist
-                put("isArtist", "true")
-                put("userType", "artist")
-                put("profileUrl", "https://music.youtube.com/channel/$id")
-                // Add channel information
-                put("channelId", id)
-                put("displayName", name ?: "Unknown")
-            }
-        )
-    } catch (e: Exception) {
-        println("DEBUG: Failed to convert YtmArtist to User: ${e.message}")
-        // Return a basic user to prevent crashes
-        User(
-            id = id,
-            name = name ?: "Unknown User",
-            cover = null,
-            subtitle = "Artist",
-            extras = mapOf("isArtist" to "true", "userType" to "artist")
-        )
-    }
-}
-
-fun User.toArtist(): Artist {
-    return try {
-        // Use the more comprehensive ModelTypeHelper to ensure proper conversion
-        // with additional safety checks to prevent ClassCastException
-        ModelTypeHelper.userToArtist(this)
-    } catch (e: Exception) {
-        println("DEBUG: Failed to convert User to Artist: ${e.message}")
-        // Return a basic artist to prevent crashes
-        Artist(
-            id = id,
-            name = name ?: "Unknown Artist",
-            cover = cover,
-            bio = subtitle,
-            extras = extras.toMutableMap().apply { put("genuineArtist", "true") }
-        )
-    }
-}
-
-private fun parseYearString(yearValue: Any): Date? {
-    val yearStr = yearValue.toString()
-    return try {
-        // First try to parse as timestamp (long value)
-        if (yearStr.length >= 10 && yearStr.all { it.isDigit() }) {
-            Date(yearStr.toLong())
-        } else {
-            // Otherwise parse as year
-            Date(yearStr.toInt())
-        }
-    } catch (e: Exception) {
-        // If that fails, try just the year
-        try {
-            Date(yearStr.toInt())
-        } catch (e: Exception) {
-            null
-        }
-    }
-}
-
-val json = Json { ignoreUnknownKeys = true }
-suspend fun HttpResponse.getUsers(
-    cookie: String,
-    auth: String
-) = bodyAsText().let {
-    val trimmed = it.substringAfter(")]}'")
-    json.decodeFromString<GoogleAccountResponse>(trimmed)
-}.getUsers(cookie, auth)

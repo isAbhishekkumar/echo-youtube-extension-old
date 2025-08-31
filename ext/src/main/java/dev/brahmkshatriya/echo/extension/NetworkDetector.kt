@@ -3,6 +3,7 @@ package dev.brahmkshatriya.echo.extension
 import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
+import io.ktor.client.plugins.timeout.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.URL
@@ -24,7 +25,7 @@ class NetworkDetector(private val client: HttpClient) {
      * Detect the current network type by testing YouTube accessibility
      */
     suspend fun detectNetworkType(): NetworkType = withContext(Dispatchers.IO) {
-        return try {
+        try {
             // Test 1: Check YouTube Music API access
             val musicAccessible = testEndpointAccess("https://music.youtube.com/youtubei/v1/player")
             

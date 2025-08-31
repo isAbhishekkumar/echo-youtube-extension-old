@@ -10,6 +10,7 @@ import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.plugins.timeout.*
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import kotlinx.coroutines.async
@@ -233,30 +234,11 @@ class EnhancedVideoEndpoint(
         // Step 2: Get retry strategy for this network type
         val retryStrategy = networkDetector.getRetryStrategy(networkType)
 
-        // Step 3: Generate PoToken if enabled (more aggressive on restricted networks)
-        val poToken = if (enablePoToken && extension.isPoTokenEnabled()) {
-            try {
-                // On restricted networks, always try PoToken generation
-                if (networkType == NetworkDetector.NetworkType.WIFI_RESTRICTED) {
-                    println("DEBUG: Restricted network detected, forcing PoToken generation")
-                    extension.generatePoTokenForVideoPublic(videoId)
-                } else {
-                    // On other networks, try PoToken but don't fail if it doesn't work
-                    runCatching { extension.generatePoTokenForVideoPublic(videoId) }.getOrNull()
-                }
-            } catch (e: Exception) {
-                println("DEBUG: PoToken generation failed: ${e.message}")
-                null
-            }
-        } else {
-            null
-        }
-
-        // Step 4: Get network-optimized client priority
+        // Step 3: Get network-optimized client priority
         val clientPriority = getClientPriorityForNetwork(networkType)
         println("DEBUG: Client priority for $networkType: ${clientPriority.map { it.name }}")
 
-        // Step 5: Try clients with enhanced retry logic
+        // Step 4: Try clients with enhanced retry logic
         var lastException: Exception? = null
         var successfulResponse: HttpResponse? = null
         var successfulClient: EnhancedClientConfig? = null
@@ -267,7 +249,7 @@ class EnhancedVideoEndpoint(
             try {
                 println("DEBUG: Attempt ${attempt + 1}/${retryStrategy.maxAttempts} - Trying client: ${client.name}")
 
-                val response = requestWithEnhancedClient(client, videoId, playlistId, poToken, networkType)
+                val response = requestWithEnhancedClient(client, videoId, playlistId, null, networkType)
 
                 // Validate response
                 if (validateResponse(response)) {
@@ -296,11 +278,11 @@ class EnhancedVideoEndpoint(
             }
         }
 
-        // Step 6: If all enhanced clients failed, try legacy fallback
+        // Step 5: If all enhanced clients failed, try legacy fallback
         if (successfulResponse == null) {
             try {
                 println("DEBUG: All enhanced clients failed, trying legacy fallback")
-                val legacyResponse = requestLegacyFallback(videoId, playlistId, poToken, networkType)
+                val legacyResponse = requestLegacyFallback(videoId, playlistId, null, networkType)
                 
                 if (validateResponse(legacyResponse)) {
                     successfulResponse = legacyResponse

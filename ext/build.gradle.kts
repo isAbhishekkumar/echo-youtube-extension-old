@@ -26,11 +26,17 @@ dependencies {
     compileOnly(libs.echo.common)
     compileOnly(libs.kotlin.stdlib)
 
-    api(libs.ytmkt) { excludeKotlin() }  // Change to api for better visibility
+    api(libs.ytmkt) { excludeKotlin() }
     implementation(libs.ktor.client.core) { excludeKotlin() }
     implementation(libs.ktor.client.cio) { excludeKotlin() }
     implementation(libs.ktor.client.content.negotiation) { excludeKotlin() }
     implementation(libs.ktor.serialization.kotlinx.json) { excludeKotlin() }
+    
+    // Add missing serialization dependency
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3") { excludeKotlin() }
+    
+    // Add okio for base64 operations
+    implementation("com.squareup.okio:okio:3.6.0")
 
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)
@@ -38,7 +44,6 @@ dependencies {
 }
 
 // Extension properties goto `gradle.properties` to set values
-
 val extType: String by project
 val extId: String by project
 val extClass: String by project
