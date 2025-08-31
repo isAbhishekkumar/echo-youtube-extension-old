@@ -1,5 +1,6 @@
 package dev.brahmkshatriya.echo.extension.endpoints
 
+import dev.brahmkshatriya.echo.extension.NetworkDetector
 import dev.brahmkshatriya.echo.extension.YoutubeExtension
 import dev.toastbits.ytmkt.impl.youtubei.YoutubeiApi
 import dev.toastbits.ytmkt.model.ApiEndpoint
@@ -23,83 +24,108 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.security.MessageDigest
 
 /**
- * Enhanced Video Endpoint with multi-client fallback strategy inspired by InnerTune
- * Provides robust video loading with multiple fallback mechanisms to avoid 403 errors
+ * Enhanced Video Endpoint with network-aware multi-client fallback strategy
+ * Specifically designed to handle 403 errors on WiFi networks with intelligent routing
  */
 class EnhancedVideoEndpoint(
     override val api: YoutubeiApi,
     private val extension: YoutubeExtension
 ) : ApiEndpoint() {
 
-    // Multiple client configurations for fallback strategy
-    private val clients = listOf(
-        ClientConfig.ANDROID_MUSIC,
-        ClientConfig.IOS,
-        ClientConfig.TVHTML5,
-        ClientConfig.WEB_REMIX,
-        ClientConfig.ANDROID
-    )
-
-    data class ClientConfig(
+    // Network detector for intelligent client selection
+    private val networkDetector = NetworkDetector(api.client)
+    
+    // Enhanced client configurations with updated versions and better headers
+    data class EnhancedClientConfig(
         val name: String,
         val version: String,
         val apiKey: String,
         val userAgent: String,
-        val contextBuilder: (String?) -> JsonObject
+        val clientNumber: String,
+        val contextBuilder: (String?) -> JsonObject,
+        val priority: Map<NetworkDetector.NetworkType, Int> = emptyMap()
     ) {
         companion object {
-            val ANDROID_MUSIC = ClientConfig(
+            val ANDROID_MUSIC = EnhancedClientConfig(
                 name = "ANDROID_MUSIC",
-                version = "5.01",
+                version = "5.28.1",
                 apiKey = "AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI",
-                userAgent = "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.181 Mobile Safari/537.36",
+                userAgent = "com.google.android.apps.youtube.music/5.28.1 (Linux; U; Android 11) gzip",
+                clientNumber = "21",
                 contextBuilder = { visitorData ->
                     buildJsonObject {
                         put("context", buildJsonObject {
                             put("client", buildJsonObject {
                                 put("clientName", "ANDROID_MUSIC")
-                                put("clientVersion", "5.01")
-                                put("androidSdkVersion", 30)
+                                put("clientVersion", "5.28.1")
+                                put("androidSdkVersion", 33)
                                 put("osName", "Android")
-                                put("osVersion", "12")
+                                put("osVersion", "13")
                                 put("platform", "MOBILE")
+                                put("clientFormFactor", "SMALL_FORM_FACTOR")
                                 visitorData?.let { put("visitorData", it) }
                             })
                             put("thirdParty", buildJsonObject {
-                                put("embedUrl", "https://www.youtube.com/")
+                                put("embedUrl", "https://music.youtube.com/")
+                            })
+                            put("user", buildJsonObject {
+                                put("lockedSafetyMode", false)
+                            })
+                            put("request", buildJsonObject {
+                                put("useSsl", true)
+                                put("internalExperimentFlags", emptyList<String>())
+                                put("consistencyTokenJars", emptyList<String>())
                             })
                         })
                     }
-                }
+                },
+                priority = mapOf(
+                    NetworkDetector.NetworkType.WIFI_OPEN to 1,
+                    NetworkDetector.NetworkType.MOBILE_DATA to 1,
+                    NetworkDetector.NetworkType.WIFI_RESTRICTED to 4,
+                    NetworkDetector.NetworkType.UNKNOWN to 2
+                )
             )
 
-            val IOS = ClientConfig(
+            val IOS = EnhancedClientConfig(
                 name = "IOS",
-                version = "19.34.2",
+                version = "19.45.4",
                 apiKey = "AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc",
-                userAgent = "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)",
+                userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_7 like Mac OS X;)",
+                clientNumber = "5",
                 contextBuilder = { visitorData ->
                     buildJsonObject {
                         put("context", buildJsonObject {
                             put("client", buildJsonObject {
                                 put("clientName", "IOS")
-                                put("clientVersion", "19.34.2")
+                                put("clientVersion", "19.45.4")
                                 put("deviceMake", "Apple")
                                 put("deviceModel", "iPhone16,2")
                                 put("osName", "iOS")
-                                put("osVersion", "17.5.1.21F90")
+                                put("osVersion", "17.7.1")
+                                put("platform", "MOBILE")
                                 visitorData?.let { put("visitorData", it) }
+                            })
+                            put("user", buildJsonObject {
+                                put("lockedSafetyMode", false)
                             })
                         })
                     }
-                }
+                },
+                priority = mapOf(
+                    NetworkDetector.NetworkType.WIFI_OPEN to 2,
+                    NetworkDetector.NetworkType.MOBILE_DATA to 2,
+                    NetworkDetector.NetworkType.WIFI_RESTRICTED to 2,
+                    NetworkDetector.NetworkType.UNKNOWN to 1
+                )
             )
 
-            val TVHTML5 = ClientConfig(
+            val TVHTML5 = EnhancedClientConfig(
                 name = "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
                 version = "2.0",
                 apiKey = "AIzaSyDCU8hByM-4DrUqRUYnGn-3llEO78bcxq8",
                 userAgent = "Mozilla/5.0 (PlayStation 4 5.55) AppleWebKit/601.2 (KHTML, like Gecko)",
+                clientNumber = "85",
                 contextBuilder = { visitorData ->
                     buildJsonObject {
                         put("context", buildJsonObject {
@@ -107,64 +133,92 @@ class EnhancedVideoEndpoint(
                                 put("clientName", "TVHTML5_SIMPLY_EMBEDDED_PLAYER")
                                 put("clientVersion", "2.0")
                                 put("platform", "TV")
+                                put("clientScreen", "EMBED")
                                 visitorData?.let { put("visitorData", it) }
                             })
                             put("thirdParty", buildJsonObject {
-                                put("embedUrl", "https://www.youtube.com/")
+                                put("embedUrl", "https://music.youtube.com/")
                             })
                         })
                     }
-                }
+                },
+                priority = mapOf(
+                    NetworkDetector.NetworkType.WIFI_OPEN to 4,
+                    NetworkDetector.NetworkType.MOBILE_DATA to 5,
+                    NetworkDetector.NetworkType.WIFI_RESTRICTED to 1, // Best for restricted networks
+                    NetworkDetector.NetworkType.UNKNOWN to 2
+                )
             )
 
-            val WEB_REMIX = ClientConfig(
+            val WEB_REMIX = EnhancedClientConfig(
                 name = "WEB_REMIX",
-                version = "1.20220606.03.00",
+                version = "1.20241204.01.00",
                 apiKey = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30",
-                userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36",
+                userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                clientNumber = "67",
                 contextBuilder = { visitorData ->
                     buildJsonObject {
                         put("context", buildJsonObject {
                             put("client", buildJsonObject {
                                 put("clientName", "WEB_REMIX")
-                                put("clientVersion", "1.20220606.03.00")
+                                put("clientVersion", "1.20241204.01.00")
                                 put("platform", "DESKTOP")
+                                put("browserName", "Chrome")
+                                put("browserVersion", "131.0.0.0")
                                 visitorData?.let { put("visitorData", it) }
                             })
                         })
                     }
-                }
+                },
+                priority = mapOf(
+                    NetworkDetector.NetworkType.WIFI_OPEN to 3,
+                    NetworkDetector.NetworkType.MOBILE_DATA to 4,
+                    NetworkDetector.NetworkType.WIFI_RESTRICTED to 5, // Often blocked on restricted networks
+                    NetworkDetector.NetworkType.UNKNOWN to 3
+                )
             )
 
-            val ANDROID = ClientConfig(
+            val ANDROID = EnhancedClientConfig(
                 name = "ANDROID",
-                version = "17.13.3",
+                version = "18.48.37",
                 apiKey = "AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w",
-                userAgent = "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.181 Mobile Safari/537.36",
+                userAgent = "com.google.android.youtube/18.48.37 (Linux; U; Android 13) gzip",
+                clientNumber = "3",
                 contextBuilder = { visitorData ->
                     buildJsonObject {
                         put("context", buildJsonObject {
                             put("client", buildJsonObject {
                                 put("clientName", "ANDROID")
-                                put("clientVersion", "17.13.3")
-                                put("androidSdkVersion", 30)
+                                put("clientVersion", "18.48.37")
+                                put("androidSdkVersion", 33)
                                 put("osName", "Android")
-                                put("osVersion", "12")
+                                put("osVersion", "13")
                                 put("platform", "MOBILE")
                                 visitorData?.let { put("visitorData", it) }
                             })
+                            put("user", buildJsonObject {
+                                put("lockedSafetyMode", false)
+                            })
                         })
                     }
-                }
+                },
+                priority = mapOf(
+                    NetworkDetector.NetworkType.WIFI_OPEN to 5,
+                    NetworkDetector.NetworkType.MOBILE_DATA to 3,
+                    NetworkDetector.NetworkType.WIFI_RESTRICTED to 3,
+                    NetworkDetector.NetworkType.UNKNOWN to 4
+                )
             )
+
+            fun getAllConfigs() = listOf(ANDROID_MUSIC, IOS, TVHTML5, WEB_REMIX, ANDROID)
         }
     }
 
     /**
-     * Enhanced video loading with multi-client fallback strategy
-     * Attempts multiple clients in order of preference until one succeeds
+     * Enhanced video loading with network-aware multi-client fallback strategy
+     * Detects network type and optimizes client selection accordingly
      */
-    suspend fun getVideoWithFallback(
+    suspend fun getVideoWithEnhancedFallback(
         resolve: Boolean,
         videoId: String,
         playlistId: String? = null,
@@ -172,10 +226,24 @@ class EnhancedVideoEndpoint(
     ): Pair<HttpResponse, String?> = coroutineScope {
         println("DEBUG: Enhanced video loading for videoId: $videoId")
 
-        // Generate PoToken if enabled
+        // Step 1: Detect network type
+        val networkType = networkDetector.detectNetworkType()
+        println("DEBUG: Detected network type: $networkType")
+
+        // Step 2: Get retry strategy for this network type
+        val retryStrategy = networkDetector.getRetryStrategy(networkType)
+
+        // Step 3: Generate PoToken if enabled (more aggressive on restricted networks)
         val poToken = if (enablePoToken && extension.isPoTokenEnabled()) {
             try {
-                extension.generatePoTokenForVideoPublic(videoId)
+                // On restricted networks, always try PoToken generation
+                if (networkType == NetworkDetector.NetworkType.WIFI_RESTRICTED) {
+                    println("DEBUG: Restricted network detected, forcing PoToken generation")
+                    extension.generatePoTokenForVideoPublic(videoId)
+                } else {
+                    // On other networks, try PoToken but don't fail if it doesn't work
+                    runCatching { extension.generatePoTokenForVideoPublic(videoId) }.getOrNull()
+                }
             } catch (e: Exception) {
                 println("DEBUG: PoToken generation failed: ${e.message}")
                 null
@@ -184,29 +252,25 @@ class EnhancedVideoEndpoint(
             null
         }
 
-        // Try clients in order of preference
-        val preferredClients = if (extension.isLoggedIn()) {
-            listOf(ClientConfig.ANDROID_MUSIC, ClientConfig.IOS, ClientConfig.TVHTML5, ClientConfig.WEB_REMIX)
-        } else {
-            listOf(ClientConfig.IOS, ClientConfig.TVHTML5, ClientConfig.WEB_REMIX, ClientConfig.ANDROID)
-        }
+        // Step 4: Get network-optimized client priority
+        val clientPriority = getClientPriorityForNetwork(networkType)
+        println("DEBUG: Client priority for $networkType: ${clientPriority.map { it.name }}")
 
+        // Step 5: Try clients with enhanced retry logic
         var lastException: Exception? = null
         var successfulResponse: HttpResponse? = null
-        var successfulClient: ClientConfig? = null
+        var successfulClient: EnhancedClientConfig? = null
 
-        for (client in preferredClients) {
+        for ((attempt, client) in clientPriority.withIndex()) {
+            if (attempt >= retryStrategy.maxAttempts) break
+
             try {
-                println("DEBUG: Trying client: ${client.name}")
-                
-                val response = requestWithClient(client, videoId, playlistId, poToken)
-                
-                // Check if the response is valid by parsing it
-                val responseBody = response.body<JsonObject>()
-                val videoDetails = responseBody["videoDetails"]?.jsonObject
-                val streamingData = responseBody["streamingData"]?.jsonObject
-                
-                if (videoDetails != null && streamingData != null) {
+                println("DEBUG: Attempt ${attempt + 1}/${retryStrategy.maxAttempts} - Trying client: ${client.name}")
+
+                val response = requestWithEnhancedClient(client, videoId, playlistId, poToken, networkType)
+
+                // Validate response
+                if (validateResponse(response)) {
                     println("DEBUG: Successfully loaded video with client: ${client.name}")
                     successfulResponse = response
                     successfulClient = client
@@ -214,29 +278,36 @@ class EnhancedVideoEndpoint(
                 } else {
                     println("DEBUG: Invalid response from client: ${client.name}")
                 }
-                
+
             } catch (e: Exception) {
                 println("DEBUG: Client ${client.name} failed: ${e.message}")
                 lastException = e
-                // Small delay between retries to avoid rate limiting
-                delay(200)
+
+                // Exponential backoff for restricted networks
+                if (attempt < clientPriority.size - 1) {
+                    val delayMs = if (retryStrategy.exponentialBackoff) {
+                        minOf(retryStrategy.baseDelay * (1L shl attempt), retryStrategy.maxDelay)
+                    } else {
+                        retryStrategy.baseDelay
+                    }
+                    println("DEBUG: Waiting ${delayMs}ms before next attempt")
+                    delay(delayMs)
+                }
             }
         }
 
-        // If all clients failed, try with basic web context as last resort
+        // Step 6: If all enhanced clients failed, try legacy fallback
         if (successfulResponse == null) {
             try {
-                println("DEBUG: Trying basic web context as last resort")
-                val basicResponse = requestBasicWeb(videoId, playlistId)
-                val responseBody = basicResponse.body<JsonObject>()
-                val videoDetails = responseBody["videoDetails"]?.jsonObject
+                println("DEBUG: All enhanced clients failed, trying legacy fallback")
+                val legacyResponse = requestLegacyFallback(videoId, playlistId, poToken, networkType)
                 
-                if (videoDetails != null) {
-                    successfulResponse = basicResponse
+                if (validateResponse(legacyResponse)) {
+                    successfulResponse = legacyResponse
                     successfulClient = null
                 }
             } catch (e: Exception) {
-                println("DEBUG: Basic web context also failed: ${e.message}")
+                println("DEBUG: Legacy fallback also failed: ${e.message}")
                 lastException = e
             }
         }
@@ -244,40 +315,129 @@ class EnhancedVideoEndpoint(
         return@coroutineScope if (successfulResponse != null) {
             successfulResponse to (successfulClient?.name)
         } else {
-            throw lastException ?: Exception("All clients failed to load video")
+            throw lastException ?: Exception("All clients failed to load video on $networkType")
         }
     }
 
     /**
-     * Make request with specific client configuration
+     * Get client priority order based on network type
      */
-    private suspend fun requestWithClient(
-        client: ClientConfig,
+    private fun getClientPriorityForNetwork(networkType: NetworkDetector.NetworkType): List<EnhancedClientConfig> {
+        return EnhancedClientConfig.getAllConfigs()
+            .sortedBy { config ->
+                config.priority[networkType] ?: Int.MAX_VALUE
+            }
+    }
+
+    /**
+     * Enhanced request with network-specific optimizations
+     */
+    private suspend fun requestWithEnhancedClient(
+        client: EnhancedClientConfig,
         videoId: String,
         playlistId: String?,
-        poToken: String?
+        poToken: String?,
+        networkType: NetworkDetector.NetworkType
     ): HttpResponse {
         val context = client.contextBuilder(api.visitor_id)
-        
+        val enhancedHeaders = networkDetector.getEnhancedHeaders(networkType)
+        val timeout = networkDetector.getRequestTimeout(networkType)
+
         return api.client.post("https://music.youtube.com/youtubei/v1/player") {
+            timeout {
+                requestTimeoutMillis = timeout
+                connectTimeoutMillis = timeout / 2
+            }
+            
             parameter("key", client.apiKey)
+            parameter("prettyPrint", "false")
             contentType(ContentType.Application.Json)
             
             // Add enhanced headers
             headers {
+                // Base headers
                 append("X-Goog-Api-Format-Version", "1")
-                append("X-YouTube-Client-Name", client.name)
+                append("X-YouTube-Client-Name", client.clientNumber)
                 append("X-YouTube-Client-Version", client.version)
-                append("X-Origin", "https://music.youtube.com")
+                append("Origin", "https://music.youtube.com")
                 append("Referer", "https://music.youtube.com/")
                 append("User-Agent", client.userAgent)
                 
-                // Add authentication if logged in
+                // Network-specific enhanced headers
+                enhancedHeaders.forEach { (key, value) ->
+                    append(key, value)
+                }
+                
+                // Authentication headers if logged in
                 if (extension.isLoggedIn()) {
                     extension.getAuthHeaders()?.forEach { (key, value) ->
                         append(key, value)
                     }
                 }
+                
+                // PoToken header (critical for restricted networks)
+                poToken?.let {
+                    append("X-Goog-PoToken", it)
+                }
+                
+                // Additional security headers for restricted networks
+                if (networkType == NetworkDetector.NetworkType.WIFI_RESTRICTED) {
+                    append("Sec-Ch-Ua", "\"Microsoft Edge\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+                    append("Sec-Ch-Ua-Mobile", "?0")
+                    append("Sec-Ch-Ua-Platform", "\"Windows\"")
+                }
+            }
+            
+            // Enhanced request body
+            val requestBody = buildJsonObject {
+                put("context", context)
+                put("videoId", videoId)
+                playlistId?.let { put("playlistId", it) }
+                
+                // Additional parameters for better success rate
+                put("racyCheckOk", false)
+                put("contentCheckOk", false)
+                
+                // Network-specific parameters
+                if (networkType == NetworkDetector.NetworkType.WIFI_RESTRICTED) {
+                    put("params", "CgIIAQ%3D%3D") // Additional params for restricted networks
+                }
+            }
+            setBody(requestBody)
+        }
+    }
+
+    /**
+     * Legacy fallback request for maximum compatibility
+     */
+    private suspend fun requestLegacyFallback(
+        videoId: String,
+        playlistId: String?,
+        poToken: String?,
+        networkType: NetworkDetector.NetworkType
+    ): HttpResponse {
+        val context = buildJsonObject {
+            put("context", buildJsonObject {
+                put("client", buildJsonObject {
+                    put("clientName", "WEB")
+                    put("clientVersion", "2.20241204.01.00")
+                    api.visitor_id?.let { put("visitorData", it) }
+                })
+            })
+        }
+
+        return api.client.post("https://www.youtube.com/youtubei/v1/player") {
+            parameter("key", "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30")
+            parameter("prettyPrint", "false")
+            contentType(ContentType.Application.Json)
+            
+            headers {
+                append("X-Goog-Api-Format-Version", "1")
+                append("X-YouTube-Client-Name", "1")
+                append("X-YouTube-Client-Version", "2.20241204.01.00")
+                append("Origin", "https://www.youtube.com")
+                append("Referer", "https://www.youtube.com/")
+                append("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
                 
                 // Add PoToken if available
                 poToken?.let {
@@ -285,7 +445,6 @@ class EnhancedVideoEndpoint(
                 }
             }
             
-            // Set request body
             val requestBody = buildJsonObject {
                 put("context", context)
                 put("videoId", videoId)
@@ -296,36 +455,26 @@ class EnhancedVideoEndpoint(
     }
 
     /**
-     * Basic web request as fallback
+     * Validate HTTP response to ensure it contains valid video data
      */
-    private suspend fun requestBasicWeb(videoId: String, playlistId: String?): HttpResponse {
-        val context = buildJsonObject {
-            put("context", buildJsonObject {
-                put("client", buildJsonObject {
-                    put("clientName", "WEB")
-                    put("clientVersion", "2.2021111")
-                    api.visitor_id?.let { put("visitorData", it) }
-                })
-            })
-        }
-
-        return api.client.post("https://music.youtube.com/youtubei/v1/player") {
-            parameter("key", "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX3")
-            contentType(ContentType.Application.Json)
-            headers {
-                append("X-Goog-Api-Format-Version", "1")
-                append("X-YouTube-Client-Name", "WEB")
-                append("X-YouTube-Client-Version", "2.2021111")
-                append("X-Origin", "https://music.youtube.com")
-                append("Referer", "https://music.youtube.com/")
-                append("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36")
-            }
-            val requestBody = buildJsonObject {
-                put("context", context)
-                put("videoId", videoId)
-                playlistId?.let { put("playlistId", it) }
-            }
-            setBody(requestBody)
+    private suspend fun validateResponse(response: HttpResponse): Boolean {
+        return try {
+            val responseBody = response.body<JsonObject>()
+            val videoDetails = responseBody["videoDetails"]?.jsonObject
+            val streamingData = responseBody["streamingData"]?.jsonObject
+            
+            // Check for basic structure
+            val hasVideoDetails = videoDetails != null && 
+                                  videoDetails["videoId"]?.jsonPrimitive?.content?.isNotEmpty() == true
+            val hasStreamingData = streamingData != null && 
+                                   (streamingData["adaptiveFormats"]?.jsonArray?.isNotEmpty() == true ||
+                                    streamingData["formats"]?.jsonArray?.isNotEmpty() == true)
+            
+            hasVideoDetails && hasStreamingData
+            
+        } catch (e: Exception) {
+            println("DEBUG: Response validation failed: ${e.message}")
+            false
         }
     }
 
@@ -333,11 +482,10 @@ class EnhancedVideoEndpoint(
      * Legacy method for backward compatibility
      */
     suspend fun getVideo(resolve: Boolean, id: String, playlist: String? = null) = coroutineScope {
-        val enhancedResult = getVideoWithFallback(resolve, id, playlist)
+        val enhancedResult = getVideoWithEnhancedFallback(resolve, id, playlist)
         val web = if (resolve) {
             try {
-                // Use the basic web request for legacy compatibility
-                val response = requestBasicWeb(id, playlist).body<JsonObject>()
+                val response = requestLegacyFallback(id, playlist, null, NetworkDetector.NetworkType.UNKNOWN).body<JsonObject>()
                 val videoDetails = response["videoDetails"]?.jsonObject
                 videoDetails?.get("musicVideoType")?.jsonPrimitive?.content
             } catch (e: Exception) {
@@ -350,22 +498,20 @@ class EnhancedVideoEndpoint(
         enhancedResult.first to web
     }
 
-    private fun iosContext() = buildJsonObject {
-        put("context", buildJsonObject {
-            put("client", buildJsonObject {
-                put("clientName", "IOS")
-                put("clientVersion", "19.34.2")
-                put("visitorData", api.visitor_id)
-            })
-        })
-    }
-
-    private val webRemix = buildJsonObject {
-        put("context", buildJsonObject {
-            put("client", buildJsonObject {
-                put("clientName", "WEB_REMIX")
-                put("clientVersion", "1.20220606.03.00")
-            })
-        })
+    /**
+     * Get network diagnostics for debugging
+     */
+    suspend fun getNetworkDiagnostics(): String {
+        val networkType = networkDetector.detectNetworkType()
+        val clientPriority = getClientPriorityForNetwork(networkType)
+        val retryStrategy = networkDetector.getRetryStrategy(networkType)
+        
+        return """
+            Network Type: $networkType
+            Client Priority: ${clientPriority.map { it.name }}
+            Max Attempts: ${retryStrategy.maxAttempts}
+            Base Delay: ${retryStrategy.baseDelay}ms
+            Exponential Backoff: ${retryStrategy.exponentialBackoff}
+        """.trimIndent()
     }
 }
