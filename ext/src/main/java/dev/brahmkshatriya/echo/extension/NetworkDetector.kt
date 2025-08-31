@@ -3,10 +3,9 @@ package dev.brahmkshatriya.echo.extension
 import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.client.plugins.timeout.*
+import io.ktor.client.plugins.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.net.URL
 
 /**
  * Network type detection for optimizing YouTube API requests

@@ -1,6 +1,6 @@
 [versions]
 echoCommon = "1.0"
-kotlin = "2.2.10"
+kotlin = "2.0.0"  # Downgraded to match dependencies
 agp = "8.12.1"
 gradleShadow = "9.0.2"
 ktor = "3.0.0-beta-2"
