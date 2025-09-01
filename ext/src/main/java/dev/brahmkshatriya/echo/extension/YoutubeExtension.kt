@@ -19,7 +19,7 @@ import kotlinx.serialization.json.*
 import java.security.MessageDigest
 
 /**
- * Enhanced YouTube Extension with network-aware optimizations
+ * Enhanced YouTube Extension with working API integration
  */
 class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFeedClient,
     RadioClient, AlbumClient, ArtistClient, PlaylistClient, LoginClient.WebView,
@@ -193,7 +193,15 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun loadTrack(track: Track, throwIfFailed: Boolean): Track {
         return try {
             println("DEBUG: Loading track: ${track.title}")
-            track // Return the track as-is for now
+            
+            // Try to load the track with ytmkt API
+            val songResult = songEndpoint.loadSong(track.id)
+            if (songResult.isSuccess) {
+                val ytmTrack = songResult.getOrThrow()
+                ytmTrack
+            } else {
+                track // Return original if loading fails
+            }
         } catch (e: Exception) {
             println("DEBUG: Failed to load track: ${e.message}")
             if (throwIfFailed) throw e else track
@@ -206,13 +214,52 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             
             when (streamable.type) {
                 Streamable.MediaType.Server -> {
-                    // For now, create a simple HTTP source from the streamable ID (assuming it's a URL)
+                    // Try to get actual streaming URL from YouTube
+                    try {
+                        val videoResult = videoEndpoint.getVideo(false, streamable.id)
+                        val (response, _) = videoResult
+                        
+                        // Parse streaming data from YouTube response
+                        val responseBody = response.body<JsonObject>()
+                        val streamingData = responseBody["streamingData"]?.jsonObject
+                        val adaptiveFormats = streamingData?.get("adaptiveFormats")?.jsonArray
+                        
+                        if (adaptiveFormats != null && adaptiveFormats.isNotEmpty()) {
+                            // Find best audio format
+                            val audioFormat = adaptiveFormats.find { format ->
+                                val mimeType = format.jsonObject["mimeType"]?.jsonPrimitive?.content ?: ""
+                                mimeType.contains("audio")
+                            }
+                            
+                            if (audioFormat != null) {
+                                val url = audioFormat.jsonObject["url"]?.jsonPrimitive?.content
+                                if (url != null) {
+                                    val source = Streamable.Source.Http(
+                                        request = NetworkRequest(url = url),
+                                        type = Streamable.SourceType.Progressive,
+                                        quality = streamable.quality,
+                                        title = streamable.title,
+                                        isVideo = false
+                                    )
+                                    
+                                    return Streamable.Media.Server(
+                                        sources = listOf(source),
+                                        merged = false
+                                    )
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        println("DEBUG: Failed to get YouTube streaming URL: ${e.message}")
+                    }
+                    
+                    // Fallback to basic implementation
                     val source = Streamable.Source.Http(
-                        request = NetworkRequest(url = streamable.id),
+                        request = NetworkRequest(url = "https://www.youtube.com/watch?v=${streamable.id}"),
                         type = Streamable.SourceType.Progressive,
                         quality = streamable.quality,
                         title = streamable.title,
-                        isVideo = false // YouTube Music is primarily audio
+                        isVideo = false
                     )
                     
                     Streamable.Media.Server(
@@ -222,9 +269,8 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                 }
                 
                 Streamable.MediaType.Background -> {
-                    // Create background media for video content
                     Streamable.Media.Background(
-                        request = NetworkRequest(url = streamable.id)
+                        request = NetworkRequest(url = "https://img.youtube.com/vi/${streamable.id}/maxresdefault.jpg")
                     )
                 }
                 
@@ -241,10 +287,31 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun loadHomeFeed(): Feed<Shelf> {
         return try {
             ensureVisitorId()
-            // Return empty feed for now until we can properly access the API response
-            emptyList<Shelf>().toFeed()
+            println("DEBUG: Loading home feed...")
+            
+            val result = homeFeedEndpoint.getSongFeed()
+            if (result.isSuccess) {
+                val feedData = result.getOrThrow()
+                println("DEBUG: Got ${feedData.rows.size} rows from home feed")
+                
+                val shelves = feedData.rows.mapNotNull { layout ->
+                    try {
+                        layout.toShelf(api, ENGLISH, thumbnailQuality)
+                    } catch (e: Exception) {
+                        println("DEBUG: Failed to convert layout to shelf: ${e.message}")
+                        null
+                    }
+                }
+                
+                println("DEBUG: Converted to ${shelves.size} shelves")
+                shelves.toFeed()
+            } else {
+                println("DEBUG: Home feed result failed")
+                emptyList<Shelf>().toFeed()
+            }
         } catch (e: Exception) {
             println("DEBUG: Failed to load home feed: ${e.message}")
+            e.printStackTrace()
             emptyList<Shelf>().toFeed()
         }
     }
@@ -252,8 +319,21 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun loadFeed(track: Track): Feed<Shelf>? {
         return try {
             val relatedId = track.extras["relatedId"] ?: return null
-            // Return null for now until we can properly access the API response
-            null
+            println("DEBUG: Loading related feed for track: ${track.title}")
+            
+            val result = songRelatedEndpoint.loadFromPlaylist(relatedId)
+            if (result.isSuccess) {
+                val layouts = result.getOrThrow()
+                val shelves = layouts.mapNotNull { layout ->
+                    try {
+                        layout.toShelf(api, ENGLISH, thumbnailQuality)
+                    } catch (e: Exception) {
+                        println("DEBUG: Failed to convert related layout to shelf: ${e.message}")
+                        null
+                    }
+                }
+                shelves.toFeed()
+            } else null
         } catch (e: Exception) {
             println("DEBUG: Failed to load track feed: ${e.message}")
             null
@@ -264,8 +344,23 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     
     override suspend fun loadFeed(artist: Artist): Feed<Shelf> {
         return try {
-            // Return empty feed for now until we can properly access the API response
-            emptyList<Shelf>().toFeed()
+            println("DEBUG: Loading artist feed for: ${artist.name}")
+            
+            val result = songFeedEndpoint.getSongFeed(browseId = artist.id)
+            if (result.isSuccess) {
+                val feedData = result.getOrThrow()
+                val shelves = feedData.rows.mapNotNull { layout ->
+                    try {
+                        layout.toShelf(api, ENGLISH, thumbnailQuality)
+                    } catch (e: Exception) {
+                        println("DEBUG: Failed to convert artist layout to shelf: ${e.message}")
+                        null
+                    }
+                }
+                shelves.toFeed()
+            } else {
+                emptyList<Shelf>().toFeed()
+            }
         } catch (e: Exception) {
             println("DEBUG: Failed to load artist feed: ${e.message}")
             emptyList<Shelf>().toFeed()
@@ -276,10 +371,31 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     
     override suspend fun loadSearchFeed(query: String): Feed<Shelf> {
         return try {
-            // Return empty feed for now until we can properly access the API response
-            emptyList<Shelf>().toFeed()
+            println("DEBUG: Searching for: $query")
+            
+            val result = searchEndpoint.search(query, null)
+            if (result.isSuccess) {
+                val searchResults = result.getOrThrow()
+                println("DEBUG: Got ${searchResults.categories.size} search categories")
+                
+                val shelves = searchResults.categories.mapNotNull { (layout, _) ->
+                    try {
+                        layout.toShelf(api, ENGLISH, thumbnailQuality)
+                    } catch (e: Exception) {
+                        println("DEBUG: Failed to convert search layout to shelf: ${e.message}")
+                        null
+                    }
+                }
+                
+                println("DEBUG: Converted to ${shelves.size} search shelves")
+                shelves.toFeed()
+            } else {
+                println("DEBUG: Search result failed")
+                emptyList<Shelf>().toFeed()
+            }
         } catch (e: Exception) {
             println("DEBUG: Failed to load search feed: ${e.message}")
+            e.printStackTrace()
             emptyList<Shelf>().toFeed()
         }
     }
@@ -292,8 +408,9 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     
     override suspend fun loadTracks(album: Album): Feed<Track>? {
         return try {
-            playlistEndpoint.loadFromPlaylist(album.id, null, thumbnailQuality)
-            emptyList<Track>().toFeed()
+            val (_, _, pagedTracks) = playlistEndpoint.loadFromPlaylist(album.id, null, thumbnailQuality)
+            // Convert PagedData<Track> to Feed<Track>
+            pagedTracks.toFeed()
         } catch (e: Exception) {
             println("DEBUG: Failed to load album tracks: ${e.message}")
             null
@@ -302,8 +419,9 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     
     override suspend fun loadTracks(playlist: Playlist): Feed<Track> {
         return try {
-            playlistEndpoint.loadFromPlaylist(playlist.id, null, thumbnailQuality)
-            emptyList<Track>().toFeed()
+            val (_, _, pagedTracks) = playlistEndpoint.loadFromPlaylist(playlist.id, null, thumbnailQuality)
+            // Convert PagedData<Track> to Feed<Track>
+            pagedTracks.toFeed()
         } catch (e: Exception) {
             println("DEBUG: Failed to load playlist tracks: ${e.message}")
             emptyList<Track>().toFeed()
@@ -408,4 +526,6 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     private val searchEndpoint = EchoSearchEndpoint(api)
     private val playlistEndpoint = EchoPlaylistEndpoint(api)
     private val artistEndpoint = EchoArtistEndpoint(api)
+    private val songEndpoint = EchoSongEndPoint(api)
+    private val videoEndpoint = EchoVideoEndpoint(api)
 }
