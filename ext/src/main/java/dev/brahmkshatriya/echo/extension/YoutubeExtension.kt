@@ -202,10 +202,35 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     
     override suspend fun loadStreamableMedia(streamable: Streamable, isDownload: Boolean): Streamable.Media {
         return try {
-            when (streamable) {
-                is Streamable.Media -> return streamable
-                is Streamable.Source -> Streamable.Media.Http(streamable.request)
-                else -> throw Exception("Unsupported streamable type")
+            println("DEBUG: Loading streamable media: ${streamable.id}, type: ${streamable.type}")
+            
+            when (streamable.type) {
+                Streamable.MediaType.Server -> {
+                    // For now, create a simple HTTP source from the streamable ID (assuming it's a URL)
+                    val source = Streamable.Source.Http(
+                        request = NetworkRequest(url = streamable.id),
+                        type = Streamable.SourceType.Progressive,
+                        quality = streamable.quality,
+                        title = streamable.title,
+                        isVideo = false // YouTube Music is primarily audio
+                    )
+                    
+                    Streamable.Media.Server(
+                        sources = listOf(source),
+                        merged = false
+                    )
+                }
+                
+                Streamable.MediaType.Background -> {
+                    // Create background media for video content
+                    Streamable.Media.Background(
+                        request = NetworkRequest(url = streamable.id)
+                    )
+                }
+                
+                else -> {
+                    throw Exception("Unsupported streamable media type: ${streamable.type}")
+                }
             }
         } catch (e: Exception) {
             println("DEBUG: Failed to load streamable media: ${e.message}")
