@@ -17,11 +17,14 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonArray
 import java.security.MessageDigest
 
 /**
@@ -74,8 +77,8 @@ class EnhancedVideoEndpoint(
                             })
                             put("request", buildJsonObject {
                                 put("useSsl", true)
-                                put("internalExperimentFlags", emptyList<String>())
-                                put("consistencyTokenJars", emptyList<String>())
+                                put("internalExperimentFlags", JsonArray(emptyList()))
+                                put("consistencyTokenJars", JsonArray(emptyList()))
                             })
                         })
                     }
@@ -372,7 +375,7 @@ class EnhancedVideoEndpoint(
             
             // Enhanced request body
             val requestBody = buildJsonObject {
-                put("context", context)
+                put("context", context.jsonObject["context"]!!)
                 put("videoId", videoId)
                 playlistId?.let { put("playlistId", it) }
                 
@@ -428,7 +431,7 @@ class EnhancedVideoEndpoint(
             }
             
             val requestBody = buildJsonObject {
-                put("context", context)
+                put("context", context.jsonObject["context"]!!)
                 put("videoId", videoId)
                 playlistId?.let { put("playlistId", it) }
             }

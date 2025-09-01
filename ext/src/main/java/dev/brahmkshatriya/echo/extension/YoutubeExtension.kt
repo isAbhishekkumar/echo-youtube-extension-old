@@ -16,6 +16,9 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import java.security.MessageDigest
+import io.ktor.client.HttpClient
+import io.ktor.client.request.request
+import io.ktor.client.statement.HttpResponse
 
 /**
  * Enhanced YouTube Extension with network-aware optimizations
@@ -85,7 +88,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     private var enhancedVideoEndpoint: EnhancedVideoEndpoint? = null
     
     // Legacy components for backward compatibility
-    private var webViewClient: WebViewClient? = null
+    private var webViewClient: dev.brahmkshatriya.echo.common.helpers.WebViewClient? = null
     private var currentSessionId: String? = null
     
     // Authentication state management
@@ -218,19 +221,21 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         return try {
             ensureVisitorId()
             val response = homeFeedEndpoint.getSongFeed().getOrNull()
-            response?.rows?.map { layout ->
-                layout.toShelf(api, ENGLISH, thumbnailQuality)
-            }?.let { shelves ->
-                Feed(shelves) { 
-                    Feed.Data(PagedData.Single { emptyList() })
+            response?.rows?.let { rows ->
+                rows.map { layout ->
+                    layout.toShelf(api, ENGLISH, thumbnailQuality)
+                }.let { shelves ->
+                    Feed(shelves) { 
+                        Feed.Data(PagedData.Single { emptyList<Shelf>() })
+                    }
                 }
-            } ?: Feed(emptyList()) { 
-                Feed.Data(PagedData.Single { emptyList() })
+            } ?: Feed(emptyList<Shelf>()) { 
+                Feed.Data(PagedData.Single { emptyList<Shelf>() })
             }
         } catch (e: Exception) {
             println("DEBUG: Failed to load home feed: ${e.message}")
-            Feed(emptyList()) { 
-                Feed.Data(PagedData.Single { emptyList() })
+            Feed(emptyList<Shelf>()) { 
+                Feed.Data(PagedData.Single { emptyList<Shelf>() })
             }
         }
     }
@@ -243,7 +248,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                 layout.toShelf(api, ENGLISH, thumbnailQuality)
             }.let { shelves ->
                 Feed(shelves) { 
-                    Feed.Data(PagedData.Single { emptyList() })
+                    Feed.Data(PagedData.Single { emptyList<Shelf>() })
                 }
             }
         } catch (e: Exception) {
@@ -257,19 +262,21 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun loadFeed(artist: Artist): Feed<Shelf> {
         return try {
             val response = songFeedEndpoint.getSongFeed(browseId = artist.id).getOrNull()
-            response?.rows?.map { layout ->
-                layout.toShelf(api, ENGLISH, thumbnailQuality)
-            }?.let { shelves ->
-                Feed(shelves) { 
-                    Feed.Data(PagedData.Single { emptyList() })
+            response?.rows?.let { rows ->
+                rows.map { layout ->
+                    layout.toShelf(api, ENGLISH, thumbnailQuality)
+                }.let { shelves ->
+                    Feed(shelves) { 
+                        Feed.Data(PagedData.Single { emptyList<Shelf>() })
+                    }
                 }
-            } ?: Feed(emptyList()) { 
-                Feed.Data(PagedData.Single { emptyList() })
+            } ?: Feed(emptyList<Shelf>()) { 
+                Feed.Data(PagedData.Single { emptyList<Shelf>() })
             }
         } catch (e: Exception) {
             println("DEBUG: Failed to load artist feed: ${e.message}")
-            Feed(emptyList()) { 
-                Feed.Data(PagedData.Single { emptyList() })
+            Feed(emptyList<Shelf>()) { 
+                Feed.Data(PagedData.Single { emptyList<Shelf>() })
             }
         }
     }
@@ -279,19 +286,21 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun loadSearchFeed(query: String): Feed<Shelf> {
         return try {
             val response = searchEndpoint.search(query, null).getOrNull()
-            response?.categories?.map { (layout, _) ->
-                layout.toShelf(api, ENGLISH, thumbnailQuality)
-            }?.let { shelves ->
-                Feed(shelves) { 
-                    Feed.Data(PagedData.Single { emptyList() })
+            response?.categories?.let { categories ->
+                categories.map { (layout, _) ->
+                    layout.toShelf(api, ENGLISH, thumbnailQuality)
+                }.let { shelves ->
+                    Feed(shelves) { 
+                        Feed.Data(PagedData.Single { emptyList<Shelf>() })
+                    }
                 }
-            } ?: Feed(emptyList()) { 
-                Feed.Data(PagedData.Single { emptyList() })
+            } ?: Feed(emptyList<Shelf>()) { 
+                Feed.Data(PagedData.Single { emptyList<Shelf>() })
             }
         } catch (e: Exception) {
             println("DEBUG: Failed to load search feed: ${e.message}")
-            Feed(emptyList()) { 
-                Feed.Data(PagedData.Single { emptyList() })
+            Feed(emptyList<Shelf>()) { 
+                Feed.Data(PagedData.Single { emptyList<Shelf>() })
             }
         }
     }
@@ -299,8 +308,8 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun loadRadio(radio: Radio): Radio = radio
     
     override suspend fun loadTracks(radio: Radio): Feed<Track> {
-        return Feed(emptyList()) { 
-            Feed.Data(PagedData.Single { emptyList() })
+        return Feed(emptyList<Track>()) { 
+            Feed.Data(PagedData.Single { emptyList<Track>() })
         }
     }
     
@@ -308,7 +317,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         return try {
             val (_, _, tracks) = playlistEndpoint.loadFromPlaylist(album.id, null, thumbnailQuality)
             Feed(emptyList<Track>()) { 
-                Feed.Data(PagedData.Single { emptyList() })
+                Feed.Data(PagedData.Single { emptyList<Track>() })
             }
         } catch (e: Exception) {
             println("DEBUG: Failed to load album tracks: ${e.message}")
@@ -320,12 +329,12 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         return try {
             val (_, _, tracks) = playlistEndpoint.loadFromPlaylist(playlist.id, null, thumbnailQuality)
             Feed(emptyList<Track>()) { 
-                Feed.Data(PagedData.Single { emptyList() })
+                Feed.Data(PagedData.Single { emptyList<Track>() })
             }
         } catch (e: Exception) {
             println("DEBUG: Failed to load playlist tracks: ${e.message}")
-            Feed(emptyList()) { 
-                Feed.Data(PagedData.Single { emptyList() })
+            Feed(emptyList<Track>()) { 
+                Feed.Data(PagedData.Single { emptyList<Track>() })
             }
         }
     }
@@ -376,12 +385,12 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun onPlayingStateChanged(details: TrackDetails?, isPlaying: Boolean) {}
     override suspend fun getMarkAsPlayedDuration(details: TrackDetails): Long? = null
     override suspend fun onMarkAsPlayed(details: TrackDetails) {}
-    override suspend fun loadLibraryFeed(): Feed<Shelf> = Feed(emptyList()) { 
-        Feed.Data(PagedData.Single { emptyList() })
+    override suspend fun loadLibraryFeed(): Feed<Shelf> = Feed(emptyList<Shelf>()) { 
+        Feed.Data(PagedData.Single { emptyList<Shelf>() })
     }
     override suspend fun onShare(item: EchoMediaItem): String = "https://music.youtube.com"
-    override suspend fun searchTrackLyrics(clientId: String, track: Track): Feed<Lyrics> = Feed(emptyList()) { 
-        Feed.Data(PagedData.Single { emptyList() })
+    override suspend fun searchTrackLyrics(clientId: String, track: Track): Feed<Lyrics> = Feed(emptyList<Lyrics>()) { 
+        Feed.Data(PagedData.Single { emptyList<Lyrics>() })
     }
     override suspend fun loadLyrics(lyrics: Lyrics): Lyrics = lyrics
     override suspend fun isFollowing(item: EchoMediaItem): Boolean = false
@@ -398,8 +407,8 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun addTracksToPlaylist(playlist: Playlist, tracks: List<Track>, index: Int, new: List<Track>) {}
     override suspend fun removeTracksFromPlaylist(playlist: Playlist, tracks: List<Track>, indexes: List<Int>) {}
     override suspend fun moveTrackInPlaylist(playlist: Playlist, tracks: List<Track>, fromIndex: Int, toIndex: Int) {}
-    override suspend fun searchLyrics(query: String): Feed<Lyrics> = Feed(emptyList()) { 
-        Feed.Data(PagedData.Single { emptyList() })
+    override suspend fun searchLyrics(query: String): Feed<Lyrics> = Feed(emptyList<Lyrics>()) { 
+        Feed.Data(PagedData.Single { emptyList<Lyrics>() })
     }
     override suspend fun quickSearch(query: String): List<QuickSearchItem> = emptyList()
     override suspend fun deleteQuickSearch(item: QuickSearchItem) {}

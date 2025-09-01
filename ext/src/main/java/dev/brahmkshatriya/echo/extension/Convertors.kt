@@ -43,6 +43,26 @@ fun String.containsTimestamp(): Boolean {
     return Regex("\\d{10,}").containsMatchIn(this)
 }
 
+// Helper function to parse year string - handles both years and timestamps
+fun parseYearString(yearStr: String): Date? {
+    return try {
+        // Try to parse as year first (4 digits)
+        if (yearStr.length == 4 && yearStr.all { it.isDigit() }) {
+            Date(yearStr.toInt())
+        } else if (yearStr.containsTimestamp()) {
+            // Handle timestamp format
+            yearStr.toDateFromTimestamp()
+        } else {
+            // Try to extract year from string
+            val yearMatch = Regex("\\d{4}").find(yearStr)
+            yearMatch?.let { Date(it.value.toInt()) }
+        }
+    } catch (e: Exception) {
+        println("DEBUG: Failed to parse year string: $yearStr, error: ${e.message}")
+        null
+    }
+}
+
 suspend fun MediaItemLayout.toShelf(
     api: YoutubeiApi,
     language: String,
@@ -151,7 +171,7 @@ fun YtmPlaylist.toPlaylist(
             trackCount = item_count?.toLong(),
             duration = total_duration?.toLong(),
             creationDate = year?.let { yearStr -> 
-                parseYearString(yearStr)
+                parseYearString(yearStr.toString())
             },
             description = description,
             extras = extras,
@@ -190,7 +210,7 @@ fun YtmPlaylist.toAlbum(
             artists = artists?.map { it.toArtist(quality) } ?: emptyList(),
             trackCount = item_count?.toLong() ?: if (single) 1L else null,
             releaseDate = year?.let { yearStr -> 
-                parseYearString(yearStr)
+                parseYearString(yearStr.toString())
             },
             label = null,
             duration = total_duration?.toLong(),
@@ -330,3 +350,30 @@ fun YtmArtist.toUser(
                 count >= 1000 -> "${(count / 1000).toInt()}K subscribers"
                 else -> "$count subscribers"
             }
+        }
+        
+        User(
+            id = id,
+            name = name ?: "Unknown",
+            cover = thumbnail_provider?.getThumbnailUrl(quality)?.toImageHolder(mapOf()),
+            subtitle = subscriberCountText ?: description,
+            extras = mutableMapOf<String, String>().apply {
+                subscribe_channel_id?.let { put("subId", it) }
+                subscriber_count?.let { put("subscriberCount", it.toString()) }
+                subscribed?.let { put("isSubscribed", it.toString()) }
+                // Mark this as converted from Artist for type tracking
+                put("fromArtist", "true")
+            }
+        )
+    } catch (e: Exception) {
+        println("DEBUG: Failed to convert YtmArtist to User: ${e.message}")
+        // Return a basic user to prevent crashes
+        User(
+            id = id,
+            name = name ?: "Unknown User",
+            cover = null,
+            subtitle = null,
+            extras = mapOf("fromArtist" to "true")
+        )
+    }
+}

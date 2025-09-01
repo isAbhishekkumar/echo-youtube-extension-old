@@ -50,6 +50,18 @@ class EnhancedPoTokenGenerator(
     }
 
     /**
+     * Helper function to validate PoToken
+     */
+    private fun isPoTokenValid(poToken: PoToken): Boolean {
+        return try {
+            poToken.playerRequestPoToken.isNotBlank() && 
+            poToken.streamingDataPoToken.isNotBlank()
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
      * Enhanced PoToken generation with network awareness and retry logic
      */
     suspend fun getEnhancedWebClientPoToken(
@@ -136,7 +148,7 @@ class EnhancedPoTokenGenerator(
                     // For restricted networks, always force recreation to avoid stale state
                     val poToken = getWebClientPoTokenInternal(videoId, sessionId, forceRecreate = true)
                     
-                    if (poToken != null && poToken.isValid()) {
+                    if (poToken != null && isPoTokenValid(poToken)) {
                         println("DEBUG: Restricted network strategy succeeded on attempt $attempt")
                         return@withContext poToken
                     }
