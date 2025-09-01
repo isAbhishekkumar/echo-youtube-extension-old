@@ -203,11 +203,11 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
         return try {
             val url = when (streamable) {
                 is Streamable.Media -> return streamable
-                is Streamable.Source -> streamable.request.url
+                is Streamable.Source -> streamable.url
                 else -> throw Exception("Unsupported streamable type")
             }
             
-            Streamable.Media.Http(NetworkRequest(url))
+            Streamable.Media.Url(url)
         } catch (e: Exception) {
             println("DEBUG: Failed to load streamable media: ${e.message}")
             throw e
@@ -224,24 +224,16 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                     val shelves = response.rows.map { layout ->
                         layout.toShelf(api, ENGLISH, thumbnailQuality)
                     }
-                    Feed(shelves) { 
-                        Feed.Data(PagedData.Single { emptyList<Shelf>() })
-                    }
+                    shelves.toFeed { }
                 } else {
-                    Feed(emptyList<Shelf>()) { 
-                        Feed.Data(PagedData.Single { emptyList<Shelf>() })
-                    }
+                    emptyList<Shelf>().toFeed { }
                 }
             } else {
-                Feed(emptyList<Shelf>()) { 
-                    Feed.Data(PagedData.Single { emptyList<Shelf>() })
-                }
+                emptyList<Shelf>().toFeed { }
             }
         } catch (e: Exception) {
             println("DEBUG: Failed to load home feed: ${e.message}")
-            Feed(emptyList<Shelf>()) { 
-                Feed.Data(PagedData.Single { emptyList<Shelf>() })
-            }
+            emptyList<Shelf>().toFeed { }
         }
     }
     
@@ -255,9 +247,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                     val shelves = response.map { layout ->
                         layout.toShelf(api, ENGLISH, thumbnailQuality)
                     }
-                    Feed(shelves) { 
-                        Feed.Data(PagedData.Single { emptyList<Shelf>() })
-                    }
+                    shelves.toFeed { }
                 } else null
             } else null
         } catch (e: Exception) {
@@ -277,24 +267,16 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                     val shelves = response.rows.map { layout ->
                         layout.toShelf(api, ENGLISH, thumbnailQuality)
                     }
-                    Feed(shelves) { 
-                        Feed.Data(PagedData.Single { emptyList<Shelf>() })
-                    }
+                    shelves.toFeed { }
                 } else {
-                    Feed(emptyList<Shelf>()) { 
-                        Feed.Data(PagedData.Single { emptyList<Shelf>() })
-                    }
+                    emptyList<Shelf>().toFeed { }
                 }
             } else {
-                Feed(emptyList<Shelf>()) { 
-                    Feed.Data(PagedData.Single { emptyList<Shelf>() })
-                }
+                emptyList<Shelf>().toFeed { }
             }
         } catch (e: Exception) {
             println("DEBUG: Failed to load artist feed: ${e.message}")
-            Feed(emptyList<Shelf>()) { 
-                Feed.Data(PagedData.Single { emptyList<Shelf>() })
-            }
+            emptyList<Shelf>().toFeed { }
         }
     }
     
@@ -309,41 +291,29 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
                     val shelves = response.categories.map { (layout, _) ->
                         layout.toShelf(api, ENGLISH, thumbnailQuality)
                     }
-                    Feed(shelves) { 
-                        Feed.Data(PagedData.Single { emptyList<Shelf>() })
-                    }
+                    shelves.toFeed { }
                 } else {
-                    Feed(emptyList<Shelf>()) { 
-                        Feed.Data(PagedData.Single { emptyList<Shelf>() })
-                    }
+                    emptyList<Shelf>().toFeed { }
                 }
             } else {
-                Feed(emptyList<Shelf>()) { 
-                    Feed.Data(PagedData.Single { emptyList<Shelf>() })
-                }
+                emptyList<Shelf>().toFeed { }
             }
         } catch (e: Exception) {
             println("DEBUG: Failed to load search feed: ${e.message}")
-            Feed(emptyList<Shelf>()) { 
-                Feed.Data(PagedData.Single { emptyList<Shelf>() })
-            }
+            emptyList<Shelf>().toFeed { }
         }
     }
     
     override suspend fun loadRadio(radio: Radio): Radio = radio
     
     override suspend fun loadTracks(radio: Radio): Feed<Track> {
-        return Feed(emptyList<Track>()) { 
-            Feed.Data(PagedData.Single { emptyList<Track>() })
-        }
+        return emptyList<Track>().toFeed { }
     }
     
     override suspend fun loadTracks(album: Album): Feed<Track>? {
         return try {
             playlistEndpoint.loadFromPlaylist(album.id, null, thumbnailQuality)
-            Feed(emptyList<Track>()) { 
-                Feed.Data(PagedData.Single { emptyList<Track>() })
-            }
+            emptyList<Track>().toFeed { }
         } catch (e: Exception) {
             println("DEBUG: Failed to load album tracks: ${e.message}")
             null
@@ -353,14 +323,10 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun loadTracks(playlist: Playlist): Feed<Track> {
         return try {
             playlistEndpoint.loadFromPlaylist(playlist.id, null, thumbnailQuality)
-            Feed(emptyList<Track>()) { 
-                Feed.Data(PagedData.Single { emptyList<Track>() })
-            }
+            emptyList<Track>().toFeed { }
         } catch (e: Exception) {
             println("DEBUG: Failed to load playlist tracks: ${e.message}")
-            Feed(emptyList<Track>()) { 
-                Feed.Data(PagedData.Single { emptyList<Track>() })
-            }
+            emptyList<Track>().toFeed { }
         }
     }
     
@@ -412,17 +378,13 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun onMarkAsPlayed(details: TrackDetails) {}
     
     override suspend fun loadLibraryFeed(): Feed<Shelf> {
-        return Feed(emptyList<Shelf>()) { 
-            Feed.Data(PagedData.Single { emptyList<Shelf>() })
-        }
+        return emptyList<Shelf>().toFeed { }
     }
     
     override suspend fun onShare(item: EchoMediaItem): String = "https://music.youtube.com"
     
     override suspend fun searchTrackLyrics(clientId: String, track: Track): Feed<Lyrics> {
-        return Feed(emptyList<Lyrics>()) { 
-            Feed.Data(PagedData.Single { emptyList<Lyrics>() })
-        }
+        return emptyList<Lyrics>().toFeed { }
     }
     
     override suspend fun loadLyrics(lyrics: Lyrics): Lyrics = lyrics
@@ -444,27 +406,15 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
     override suspend fun moveTrackInPlaylist(playlist: Playlist, tracks: List<Track>, fromIndex: Int, toIndex: Int) {}
     
     override suspend fun searchLyrics(query: String): Feed<Lyrics> {
-        return Feed(emptyList<Lyrics>()) { 
-            Feed.Data(PagedData.Single { emptyList<Lyrics>() })
-        }
+        return emptyList<Lyrics>().toFeed { }
     }
     
     override suspend fun quickSearch(query: String): List<QuickSearchItem> = emptyList()
     override suspend fun deleteQuickSearch(item: QuickSearchItem) {}
     
-    // WebView request implementation - using a concrete class instead of anonymous object
-    override val webViewRequest: WebViewRequest<List<User>> = SimpleWebViewRequest()
-    
-    private class SimpleWebViewRequest : WebViewRequest<List<User>> {
-        override val initialUrl = NetworkRequest(
-            url = "https://accounts.google.com/oauth/authorize",
-            headers = emptyMap(),
-            method = NetworkRequest.Method.GET,
-            bodyBase64 = null
-        )
-        override val stopUrlRegex = Regex(".*")
-        override val maxTimeout = 30000L
-    }
+    // WebView request implementation - simple property instead of extending sealed interface
+    override val webViewRequest: WebViewRequest<List<User>>
+        get() = TODO("WebView login not implemented yet")
     
     fun generateSessionId(): String {
         return "session_${System.currentTimeMillis()}_${(0..1000).random()}"
