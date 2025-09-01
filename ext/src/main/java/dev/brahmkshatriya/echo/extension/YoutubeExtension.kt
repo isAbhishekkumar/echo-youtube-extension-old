@@ -12,6 +12,7 @@ import dev.toastbits.ytmkt.impl.youtubei.YoutubeiAuthenticationState
 import dev.toastbits.ytmkt.model.external.*
 import dev.toastbits.ytmkt.model.external.ThumbnailProvider.Quality.*
 import dev.toastbits.ytmkt.model.external.mediaitem.YtmArtist
+import io.ktor.client.call.body
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.encodeToString
@@ -19,7 +20,7 @@ import kotlinx.serialization.json.*
 import java.security.MessageDigest
 
 /**
- * Enhanced YouTube Extension with working API integration
+ * Safe YouTube Extension with working API integration
  */
 class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFeedClient,
     RadioClient, AlbumClient, ArtistClient, PlaylistClient, LoginClient.WebView,
@@ -197,8 +198,7 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             // Try to load the track with ytmkt API
             val songResult = songEndpoint.loadSong(track.id)
             if (songResult.isSuccess) {
-                val ytmTrack = songResult.getOrThrow()
-                ytmTrack
+                songResult.getOrThrow()
             } else {
                 track // Return original if loading fails
             }
@@ -214,43 +214,47 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             
             when (streamable.type) {
                 Streamable.MediaType.Server -> {
-                    // Try to get actual streaming URL from YouTube
+                    // Try to get actual streaming URL from YouTube with enhanced video endpoint
                     try {
-                        val videoResult = videoEndpoint.getVideo(false, streamable.id)
-                        val (response, _) = videoResult
-                        
-                        // Parse streaming data from YouTube response
-                        val responseBody = response.body<JsonObject>()
-                        val streamingData = responseBody["streamingData"]?.jsonObject
-                        val adaptiveFormats = streamingData?.get("adaptiveFormats")?.jsonArray
-                        
-                        if (adaptiveFormats != null && adaptiveFormats.isNotEmpty()) {
-                            // Find best audio format
-                            val audioFormat = adaptiveFormats.find { format ->
-                                val mimeType = format.jsonObject["mimeType"]?.jsonPrimitive?.content ?: ""
-                                mimeType.contains("audio")
-                            }
+                        if (useEnhancedVideoEndpoint && enhancedVideoEndpoint != null) {
+                            val (response, _) = enhancedVideoEndpoint!!.getVideoWithEnhancedFallback(
+                                resolve = false,
+                                videoId = streamable.id
+                            )
                             
-                            if (audioFormat != null) {
-                                val url = audioFormat.jsonObject["url"]?.jsonPrimitive?.content
-                                if (url != null) {
-                                    val source = Streamable.Source.Http(
-                                        request = NetworkRequest(url = url),
-                                        type = Streamable.SourceType.Progressive,
-                                        quality = streamable.quality,
-                                        title = streamable.title,
-                                        isVideo = false
-                                    )
-                                    
-                                    return Streamable.Media.Server(
-                                        sources = listOf(source),
-                                        merged = false
-                                    )
+                            // Parse streaming data from YouTube response
+                            val responseBody = response.body<JsonObject>()
+                            val streamingData = responseBody["streamingData"]?.jsonObject
+                            val adaptiveFormats = streamingData?.get("adaptiveFormats")?.jsonArray
+                            
+                            if (adaptiveFormats != null && adaptiveFormats.isNotEmpty()) {
+                                // Find best audio format
+                                val audioFormat = adaptiveFormats.find { format ->
+                                    val mimeType = format.jsonObject["mimeType"]?.jsonPrimitive?.content ?: ""
+                                    mimeType.contains("audio")
+                                }
+                                
+                                if (audioFormat != null) {
+                                    val url = audioFormat.jsonObject["url"]?.jsonPrimitive?.content
+                                    if (url != null) {
+                                        val source = Streamable.Source.Http(
+                                            request = NetworkRequest(url = url),
+                                            type = Streamable.SourceType.Progressive,
+                                            quality = streamable.quality,
+                                            title = streamable.title,
+                                            isVideo = false
+                                        )
+                                        
+                                        return Streamable.Media.Server(
+                                            sources = listOf(source),
+                                            merged = false
+                                        )
+                                    }
                                 }
                             }
                         }
                     } catch (e: Exception) {
-                        println("DEBUG: Failed to get YouTube streaming URL: ${e.message}")
+                        println("DEBUG: Enhanced video endpoint failed: ${e.message}")
                     }
                     
                     // Fallback to basic implementation
@@ -289,18 +293,36 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             ensureVisitorId()
             println("DEBUG: Loading home feed...")
             
+            // Try to get home feed data
             val result = homeFeedEndpoint.getSongFeed()
             if (result.isSuccess) {
                 val feedData = result.getOrThrow()
-                println("DEBUG: Got ${feedData.rows.size} rows from home feed")
+                println("DEBUG: Successfully got home feed data")
                 
-                val shelves = feedData.rows.mapNotNull { layout ->
-                    try {
-                        layout.toShelf(api, ENGLISH, thumbnailQuality)
-                    } catch (e: Exception) {
-                        println("DEBUG: Failed to convert layout to shelf: ${e.message}")
-                        null
+                // Safely convert the feed data to shelves
+                val shelves = mutableListOf<Shelf>()
+                try {
+                    // Use reflection or safe property access instead of direct .rows
+                    val rowsProperty = feedData::class.java.getDeclaredField("rows")
+                    rowsProperty.isAccessible = true
+                    @Suppress("UNCHECKED_CAST")
+                    val rows = rowsProperty.get(feedData) as? List<*>
+                    
+                    if (rows != null) {
+                        println("DEBUG: Got ${rows.size} rows from home feed")
+                        for (row in rows) {
+                            try {
+                                if (row is dev.toastbits.ytmkt.model.external.mediaitem.MediaItemLayout) {
+                                    val shelf = row.toShelf(api, ENGLISH, thumbnailQuality)
+                                    shelves.add(shelf)
+                                }
+                            } catch (e: Exception) {
+                                println("DEBUG: Failed to convert row to shelf: ${e.message}")
+                            }
+                        }
                     }
+                } catch (e: Exception) {
+                    println("DEBUG: Failed to access rows property: ${e.message}")
                 }
                 
                 println("DEBUG: Converted to ${shelves.size} shelves")
@@ -349,14 +371,31 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             val result = songFeedEndpoint.getSongFeed(browseId = artist.id)
             if (result.isSuccess) {
                 val feedData = result.getOrThrow()
-                val shelves = feedData.rows.mapNotNull { layout ->
-                    try {
-                        layout.toShelf(api, ENGLISH, thumbnailQuality)
-                    } catch (e: Exception) {
-                        println("DEBUG: Failed to convert artist layout to shelf: ${e.message}")
-                        null
+                val shelves = mutableListOf<Shelf>()
+                
+                try {
+                    // Safe property access for rows
+                    val rowsProperty = feedData::class.java.getDeclaredField("rows")
+                    rowsProperty.isAccessible = true
+                    @Suppress("UNCHECKED_CAST")
+                    val rows = rowsProperty.get(feedData) as? List<*>
+                    
+                    if (rows != null) {
+                        for (row in rows) {
+                            try {
+                                if (row is dev.toastbits.ytmkt.model.external.mediaitem.MediaItemLayout) {
+                                    val shelf = row.toShelf(api, ENGLISH, thumbnailQuality)
+                                    shelves.add(shelf)
+                                }
+                            } catch (e: Exception) {
+                                println("DEBUG: Failed to convert artist row to shelf: ${e.message}")
+                            }
+                        }
                     }
+                } catch (e: Exception) {
+                    println("DEBUG: Failed to access artist feed rows: ${e.message}")
                 }
+                
                 shelves.toFeed()
             } else {
                 emptyList<Shelf>().toFeed()
@@ -376,15 +415,35 @@ class YoutubeExtension : ExtensionClient, HomeFeedClient, TrackClient, SearchFee
             val result = searchEndpoint.search(query, null)
             if (result.isSuccess) {
                 val searchResults = result.getOrThrow()
-                println("DEBUG: Got ${searchResults.categories.size} search categories")
+                println("DEBUG: Search completed successfully")
                 
-                val shelves = searchResults.categories.mapNotNull { (layout, _) ->
-                    try {
-                        layout.toShelf(api, ENGLISH, thumbnailQuality)
-                    } catch (e: Exception) {
-                        println("DEBUG: Failed to convert search layout to shelf: ${e.message}")
-                        null
+                val shelves = mutableListOf<Shelf>()
+                try {
+                    // Safe access to search categories
+                    val categoriesProperty = searchResults::class.java.getDeclaredField("categories")
+                    categoriesProperty.isAccessible = true
+                    @Suppress("UNCHECKED_CAST")
+                    val categories = categoriesProperty.get(searchResults) as? List<*>
+                    
+                    if (categories != null) {
+                        println("DEBUG: Got ${categories.size} search categories")
+                        for (category in categories) {
+                            try {
+                                // Each category should be a Pair<MediaItemLayout, Filter?>
+                                if (category is Pair<*, *>) {
+                                    val layout = category.first
+                                    if (layout is dev.toastbits.ytmkt.model.external.mediaitem.MediaItemLayout) {
+                                        val shelf = layout.toShelf(api, ENGLISH, thumbnailQuality)
+                                        shelves.add(shelf)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                println("DEBUG: Failed to convert search category to shelf: ${e.message}")
+                            }
+                        }
                     }
+                } catch (e: Exception) {
+                    println("DEBUG: Failed to access search categories: ${e.message}")
                 }
                 
                 println("DEBUG: Converted to ${shelves.size} search shelves")
